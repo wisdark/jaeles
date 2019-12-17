@@ -3,9 +3,9 @@ package core
 import (
 	"crypto/sha1"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"io/ioutil"
-	"log"
 	"math/rand"
 	"net/http"
 	"net/url"
@@ -16,115 +16,140 @@ import (
 	"time"
 
 	"github.com/fatih/color"
-	"github.com/sirupsen/logrus"
 
 	"github.com/jaeles-project/jaeles/database"
 	"github.com/jaeles-project/jaeles/libs"
 
-	"github.com/go-resty/resty"
+	"github.com/parnurzeal/gorequest"
 )
 
 // JustSend just sending request
 func JustSend(options libs.Options, req libs.Request) (res libs.Response, err error) {
-	proxy := options.Proxy
+	// parsing some stuff
 	method := req.Method
 	url := req.URL
 	body := req.Body
 	headers := GetHeaders(req)
 
-	// update it again
-	var newHeader []map[string]string
-	for k, v := range headers {
-		element := make(map[string]string)
-		element[k] = v
-		newHeader = append(newHeader, element)
-	}
-	req.Headers = newHeader
-
-	// disable log when retry
-	logger := logrus.New()
-	if !options.Debug {
-		logger.Out = ioutil.Discard
-	}
-	client := resty.New().SetLogger(logger)
-
-	// setting for client
-	client.SetTLSClientConfig(&tls.Config{InsecureSkipVerify: true})
-	client.SetDisableWarn(true)
-	client.SetHeaders(headers)
-
-	// redirect policy
-	if req.Redirect == false {
-		client.SetRedirectPolicy(resty.NoRedirectPolicy())
-	} else {
-		client.SetRedirectPolicy(resty.RedirectPolicyFunc(func(req *http.Request, via []*http.Request) error {
-			// keep the header the same
-			client.SetHeaders(headers)
-			return nil
-		}))
+	// new client
+	client := gorequest.New().TLSClientConfig(&tls.Config{InsecureSkipVerify: true})
+	client.Timeout(time.Duration(options.Timeout) * time.Second)
+	if options.Proxy != "" {
+		client.Proxy(options.Proxy)
 	}
 
-	if options.Retry > 0 {
-		client.SetRetryCount(options.Retry)
-	}
-	client.SetTimeout(time.Duration(options.Timeout) * time.Second)
-	if proxy != "" {
-		client.SetProxy(proxy)
-	}
-
-	var resp *resty.Response
-	// really sending things here
+	// choose method
 	switch method {
 	case "GET":
-		resp, err = client.R().
-			SetBody([]byte(body)).
-			Get(url)
+		client.Get(url)
 		break
 	case "POST":
-		resp, err = client.R().
-			SetBody([]byte(body)).
-			Post(url)
-		break
-	case "HEAD":
-		resp, err = client.R().
-			SetBody([]byte(body)).
-			Head(url)
-		break
-	case "OPTIONS":
-		resp, err = client.R().
-			SetBody([]byte(body)).
-			Options(url)
-		break
-	case "PATCH":
-		resp, err = client.R().
-			SetBody([]byte(body)).
-			Patch(url)
+		client.Post(url)
 		break
 	case "PUT":
-		resp, err = client.R().
-			SetBody([]byte(body)).
-			Put(url)
+		client.Put(url)
+		break
+	case "HEAD":
+		client.Head(url)
+		break
+	case "PATCH":
+		client.Patch(url)
+		break
+	case "DELETE":
+		client.Delete(url)
 		break
 	}
 
-	if err != nil || resp == nil {
-		return libs.Response{}, err
+	timeStart := time.Now()
+	for k, v := range headers {
+		client.AppendHeader(k, v)
+	}
+	if body != "" {
+		client.Send(body)
 	}
 
-	return ParseResponse(*resp), nil
+	// handle Redirect
+	if req.Redirect == true {
+		client.RedirectPolicy(func(req gorequest.Request, via []gorequest.Request) error {
+			for attr, val := range via[0].Header {
+				if _, ok := req.Header[attr]; !ok {
+					req.Header[attr] = val
+				}
+			}
+			return nil
+		})
+	} else {
+		client.RedirectPolicy(func(req gorequest.Request, via []gorequest.Request) error {
+			// parsing respone in case we have redirect
+			res.Status = req.Response.Status
+			res.StatusCode = req.Response.StatusCode
+			resp := req.Response
+			bodyBytes, _ := ioutil.ReadAll(resp.Body)
+			bodyString := string(bodyBytes)
+
+			// bodyString := string(bodyBytes)
+			resLength := len(bodyString)
+			// format the headers
+			var resHeaders []map[string]string
+			for k, v := range resp.Header {
+				element := make(map[string]string)
+				element[k] = strings.Join(v[:], "")
+				resLength += len(fmt.Sprintf("%s: %s\n", k, strings.Join(v[:], "")))
+				resHeaders = append(resHeaders, element)
+			}
+
+			// respones time in second
+			resTime := time.Since(timeStart).Seconds()
+			resHeaders = append(resHeaders,
+				map[string]string{"Total Length": strconv.Itoa(resLength)},
+				map[string]string{"Response Time": fmt.Sprintf("%f", resTime)},
+			)
+
+			// set some variable
+			res.Headers = resHeaders
+			res.Body = bodyString
+			res.ResponseTime = resTime
+			res.Length = resLength
+			// beautify
+			res.Beautify = BeautifyResponse(res)
+			return errors.New("auto redirect is disabled")
+		})
+	}
+	// really sending stuff
+	resp, resBody, errs := client.End()
+	resTime := time.Since(timeStart).Seconds()
+
+	if len(errs) > 0 && res.StatusCode != 0 {
+		return res, nil
+	} else if len(errs) > 0 {
+		if options.Verbose {
+			libs.ErrorF("Error sending: %v %v", url, errs)
+		}
+		if options.Retry > 0 {
+			client.Retry(3, time.Duration(options.Timeout/2)*time.Second, http.StatusBadRequest, http.StatusInternalServerError)
+		}
+		return libs.Response{}, errs[0]
+	}
+
+	resp.Body.Close()
+	return ParseResponse(resp, resBody, resTime), nil
 }
 
 // Analyze run analyze with each detections
 func Analyze(options libs.Options, rec *libs.Record) {
+
+	if options.Debug {
+		libs.DebugF(strings.Join(rec.Request.Detections, " "))
+	}
 	/* Analyze part */
 	if rec.Request.Beautify == "" {
 		rec.Request.Beautify = BeautifyRequest(rec.Request)
 	}
 
 	for _, analyze := range rec.Request.Detections {
-		if options.Debug {
-			color.Cyan("[Analyze] %v", analyze)
-		}
+		// if options.Debug {
+		// 	color.Cyan("[Analyze] %v", analyze)
+		// }
 		extra, result := RunDetector(*rec, analyze)
 		if extra != "" {
 			rec.ExtraOutput = extra
@@ -145,19 +170,19 @@ func Analyze(options libs.Options, rec *libs.Record) {
 }
 
 // ParseResponse field to Response
-func ParseResponse(resp resty.Response) (res libs.Response) {
+func ParseResponse(resp gorequest.Response, resBody string, resTime float64) (res libs.Response) {
 	// var res libs.Response
-	resLength := len(string(resp.Body()))
+	resLength := len(string(resBody))
+
 	// format the headers
 	var resHeaders []map[string]string
-	for k, v := range resp.RawResponse.Header {
+	for k, v := range resp.Header {
 		element := make(map[string]string)
 		element[k] = strings.Join(v[:], "")
 		resLength += len(fmt.Sprintf("%s: %s\n", k, strings.Join(v[:], "")))
 		resHeaders = append(resHeaders, element)
 	}
 	// respones time in second
-	resTime := float64(resp.Time()) / float64(time.Second)
 	resHeaders = append(resHeaders,
 		map[string]string{"Total Length": strconv.Itoa(resLength)},
 		map[string]string{"Response Time": fmt.Sprintf("%f", resTime)},
@@ -165,9 +190,9 @@ func ParseResponse(resp resty.Response) (res libs.Response) {
 
 	// set some variable
 	res.Headers = resHeaders
-	res.StatusCode = resp.StatusCode()
-	res.Status = fmt.Sprintf("%v %v", resp.Status(), resp.RawResponse.Proto)
-	res.Body = string(resp.Body())
+	res.StatusCode = resp.StatusCode
+	res.Status = resp.Status
+	res.Body = resBody
 	res.ResponseTime = resTime
 	res.Length = resLength
 	// beautify
@@ -199,8 +224,8 @@ func GetHeaders(req libs.Request) map[string]string {
 	}
 
 	rand.Seed(time.Now().Unix())
-	// append user agent in case you didn't set
-	if headers["User-Agent"] == "" && req.UseTemplateHeader {
+	// append user agent in case you didn't set user-agent
+	if headers["User-Agent"] == "" {
 		rand.Seed(time.Now().Unix())
 		headers["User-Agent"] = UserAgens[rand.Intn(len(UserAgens))]
 	}
@@ -269,7 +294,7 @@ func StoreOutput(rec libs.Record, options libs.Options) string {
 	if _, err := os.Stat(path.Dir(p)); os.IsNotExist(err) {
 		err = os.MkdirAll(path.Dir(p), 0750)
 		if err != nil {
-			log.Fatalf("Error Write content to: %v", p)
+			libs.ErrorF("Error Write content to: %v", p)
 		}
 	}
 

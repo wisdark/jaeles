@@ -48,16 +48,18 @@ func init() {
 	RootCmd.PersistentFlags().StringVar(&options.ScanID, "scanID", "", "Scan ID")
 
 	RootCmd.PersistentFlags().StringVar(&options.Proxy, "proxy", "", "proxy")
-	RootCmd.PersistentFlags().IntVar(&options.Timeout, "timeout", 20, "timeout")
-	RootCmd.PersistentFlags().IntVar(&options.Retry, "retry", 2, "retry")
+	RootCmd.PersistentFlags().IntVar(&options.Timeout, "timeout", 20, "HTTP timeout")
+	RootCmd.PersistentFlags().IntVar(&options.Delay, "delay", 100, "Milliseconds delay for polling new job")
+	RootCmd.PersistentFlags().IntVar(&options.Retry, "retry", 1, "retry")
 
 	RootCmd.PersistentFlags().BoolVar(&options.SaveRaw, "save-raw", false, "save raw request")
 	RootCmd.PersistentFlags().BoolVar(&options.NoOutput, "no-output", false, "Do not store raw output")
+	RootCmd.PersistentFlags().BoolVar(&options.NoBackGround, "no-background", false, "Do not run background task")
 	RootCmd.PersistentFlags().BoolVarP(&options.Verbose, "verbose", "v", false, "Verbose")
 	RootCmd.PersistentFlags().BoolVar(&options.Debug, "debug", false, "Debug")
 	RootCmd.PersistentFlags().IntVar(&options.Refresh, "refresh", 10, "Refresh")
 
-	RootCmd.PersistentFlags().IntVarP(&options.Concurrency, "concurrency", "c", 20, "concurrency")
+	RootCmd.PersistentFlags().IntVarP(&options.Concurrency, "concurrency", "c", 10, "concurrency")
 	RootCmd.PersistentFlags().StringVarP(&options.Output, "output", "o", "out", "output folder name")
 }
 

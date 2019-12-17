@@ -7,16 +7,66 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/jaeles-project/jaeles/database"
+	"github.com/mitchellh/go-homedir"
 )
 
-// ReadingFile Reading file and reutrn content as string
+// GetFileContent Reading file and return content of it
+func GetFileContent(filename string) string {
+	var result string
+	if strings.Contains(filename, "~") {
+		filename, _ = homedir.Expand(filename)
+	}
+	file, err := os.Open(filename)
+	if err != nil {
+		return result
+	}
+	defer file.Close()
+	b, err := ioutil.ReadAll(file)
+	if err != nil {
+		return result
+	}
+	return string(b)
+}
+
+// ReadingFile Reading file and return content as []string
 func ReadingFile(filename string) []string {
 	var result []string
+	if strings.HasPrefix(filename, "~") {
+		filename, _ = homedir.Expand(filename)
+	}
+	file, err := os.Open(filename)
+	defer file.Close()
+	if err != nil {
+		return result
+	}
+
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		val := scanner.Text()
+		result = append(result, val)
+	}
+
+	if err := scanner.Err(); err != nil {
+		return result
+	}
+	return result
+}
+
+// ReadingFileUnique Reading file and return content as []string
+func ReadingFileUnique(filename string) []string {
+	var result []string
+	if strings.Contains(filename, "~") {
+		filename, _ = homedir.Expand(filename)
+	}
 	file, err := os.Open(filename)
 	defer file.Close()
 	if err != nil {
@@ -136,7 +186,6 @@ func Unzip(src string, dest string) ([]string, error) {
 		// Store filename/path for returning and using later on
 		fpath := filepath.Join(dest, f.Name)
 
-		// Check for ZipSlip. More Info: http://bit.ly/2MsjAWE
 		if !strings.HasPrefix(fpath, filepath.Clean(dest)+string(os.PathSeparator)) {
 			return filenames, fmt.Errorf("%s: illegal file path", fpath)
 		}
@@ -180,8 +229,70 @@ func Unzip(src string, dest string) ([]string, error) {
 // ExpandLength make slice to length
 func ExpandLength(list []string, length int) []string {
 	c := []string{}
-	for i := 1; i <= 9; i++ {
+	for i := 1; i <= length; i++ {
 		c = append(c, list[i%len(list)])
 	}
 	return c
+}
+
+// SelectSign select signature by multiple selector
+func SelectSign(signName string) []string {
+	var Signs []string
+
+	// return default sign if doesn't set anything
+	if signName == "" {
+		Signs = database.SelectSign(signName)
+	}
+
+	if strings.Contains(signName, ",") {
+		rawSigns := strings.Split(signName, ",")
+		for _, rawSign := range rawSigns {
+			signs := SingleSign(strings.TrimSpace(rawSign))
+			if len(signs) > 0 {
+				Signs = append(Signs, signs...)
+			}
+		}
+	} else {
+		signs := SingleSign(strings.TrimSpace(signName))
+		if len(signs) > 0 {
+			Signs = append(Signs, signs...)
+		}
+	}
+
+	return Signs
+}
+
+// SingleSign select signature by single selector
+func SingleSign(signName string) []string {
+	if strings.HasPrefix(signName, "~") {
+		signName, _ = homedir.Expand(signName)
+	}
+
+	var Signs []string
+	if strings.HasSuffix(signName, ".yaml") {
+		if FileExists(signName) {
+			Signs = append(Signs, signName)
+		}
+	}
+	// get more sign nature
+	if strings.Contains(signName, "*") && strings.Contains(signName, "/") {
+		asbPath, _ := filepath.Abs(signName)
+		baseSelect := filepath.Base(signName)
+		rawSigns := GetFileNames(filepath.Dir(asbPath), "yaml")
+		for _, signFile := range rawSigns {
+			baseSign := filepath.Base(signFile)
+			if len(baseSign) == 1 && baseSign == "*" {
+				Signs = append(Signs, signFile)
+				continue
+			}
+			r, err := regexp.Compile(baseSelect)
+			if err != nil {
+				continue
+			}
+			if r.MatchString(baseSign) {
+				Signs = append(Signs, signFile)
+			}
+		}
+	}
+	return Signs
 }

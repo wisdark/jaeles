@@ -1,5 +1,6 @@
 package libs
 
+// Signature base signature struct
 type Signature struct {
 	ID   string
 	Type string
@@ -11,10 +12,10 @@ type Signature struct {
 		OS       string
 	}
 
-	Variables    []map[string]string
-	Origin       Request
-	Payloads     []string
-	PayloadLists []string
-	Requests     []Request
-	Target       map[string]string
+	Variables  []map[string]string
+	Origin     Request
+	RawRequest string
+	Payloads   []string
+	Requests   []Request
+	Target     map[string]string
 }

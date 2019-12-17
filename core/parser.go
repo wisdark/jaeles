@@ -65,6 +65,9 @@ func ParseTarget(raw string) map[string]string {
 	var hostname string
 	var query string
 	port := u.Port()
+	// var domain string
+	domain := u.Hostname()
+
 	query = u.RawQuery
 	if u.Port() == "" {
 		if strings.Contains(u.Scheme, "https") {
@@ -85,17 +88,21 @@ func ParseTarget(raw string) map[string]string {
 
 	target["Scheme"] = u.Scheme
 	target["Path"] = u.Path
+	target["Domain"] = domain
 	target["Host"] = hostname
 	target["Port"] = port
-	target["BaseURL"] = fmt.Sprintf("%v://%v", target["Scheme"], target["Host"])
 	target["RawQuery"] = query
 
-	if target["RawQuery"] != "" {
+	if (target["RawQuery"] != "") && (port == "80" || port == "443") {
 		target["URL"] = fmt.Sprintf("%v://%v%v?%v", target["Scheme"], target["Host"], target["Path"], target["RawQuery"])
+	} else if port != "80" && port != "443" {
+		target["URL"] = fmt.Sprintf("%v://%v:%v%v?%v", target["Scheme"], target["Domain"], target["Port"], target["Path"], target["RawQuery"])
 	} else {
 		target["URL"] = fmt.Sprintf("%v://%v%v", target["Scheme"], target["Host"], target["Path"])
 	}
 
+	uu, _ := url.Parse(raw)
+	target["BaseURL"] = fmt.Sprintf("%v://%v", uu.Scheme, uu.Host)
 	target["Extension"] = filepath.Ext(target["BaseURL"])
 
 	ssrf := database.GetDefaultBurpCollab()
@@ -122,11 +129,11 @@ func MoreVariables(target map[string]string, options libs.Options) map[string]st
 func JoinURL(base string, child string) string {
 	u, err := url.Parse(child)
 	if err != nil {
-		log.Fatal(err)
+		return ""
 	}
 	result, err := url.Parse(base)
 	if err != nil {
-		log.Fatal(err)
+		return ""
 	}
 	return result.ResolveReference(u).String()
 }
@@ -134,7 +141,8 @@ func JoinURL(base string, child string) string {
 // ParseRequest parse request part in YAML signature file
 func ParseRequest(req libs.Request, sign libs.Signature) []libs.Request {
 	var Reqs []libs.Request
-	if sign.Type == "list" && len(sign.Variables) > 0 {
+
+	if sign.Type == "list" || len(sign.Variables) > 0 {
 		realVariables := ParseVariable(sign)
 		// Replace template with variable
 		for _, variable := range realVariables {
@@ -198,97 +206,30 @@ func ParseRequest(req libs.Request, sign libs.Signature) []libs.Request {
 			Req.Middlewares = ResolveDetection(req.Middlewares, target)
 			Reqs = append(Reqs, Req)
 		}
-
 	}
 
 	// only take URL as a input from cli
 	if sign.Type == "fuzz" {
-		var record libs.Record
-		record.Request = req
 		target := sign.Target
+		var record libs.Record
+		var Req libs.Request
+		// incase we have -r options
+		if req.Raw != "" {
+			rawReq := ResolveVariable(req.Raw, target)
+			Req = ParseBurpRequest(rawReq)
+			Req.Generators = req.Generators
+			Req.Detections = req.Detections
+		} else {
+			Req = req
+		}
 		record.OriginReq.URL = target["URL"]
-		// fmt.Println(record)
+		record.Request = Req
 		reqs := ParseFuzzRequest(record, sign)
 		if len(reqs) > 0 {
 			Reqs = append(Reqs, reqs...)
 		}
 	}
-	// fmt.Println(Reqs)
-
 	return Reqs
-}
-
-// ParseVariable parse variable in YAML signature file
-func ParseVariable(sign libs.Signature) []map[string]string {
-	var realVariables []map[string]string
-	rawVariables := make(map[string][]string)
-	// reading variable
-	for _, variable := range sign.Variables {
-		for key, value := range variable {
-			// strip out blank line
-			if strings.Trim(value, " ") == "" {
-				continue
-			}
-			/*
-				- variable: [google.com,example.com]
-			*/
-			// variable as a list
-			if strings.HasPrefix(value, "[") && strings.Contains(value, ",") {
-				rawVar := strings.Trim(value[1:len(value)-1], " ")
-				rawVariables[key] = strings.Split(rawVar, ",")
-				continue
-			}
-			/*
-				- variable: |
-					google.com
-					example.com
-			*/
-			if strings.Contains(value, "\n") {
-				value = strings.Trim(value, "\n\n")
-				rawVariables[key] = strings.Split(value, "\n")
-				continue
-			}
-
-			// variable as a file
-			rawVariables[key] = ReadingFile(value)
-		}
-	}
-
-	if len(rawVariables) == 1 {
-		for k, v := range rawVariables {
-			variable := make(map[string]string)
-			for _, value := range v {
-				variable[k] = value
-			}
-			realVariables = append(realVariables, variable)
-		}
-		return realVariables
-	}
-
-	// select max number of list
-	var maxLength int
-	for _, v := range rawVariables {
-		if maxLength < len(v) {
-			maxLength = len(v)
-		}
-	}
-
-	// make all variable to same length
-	Variables := make(map[string][]string)
-	for k, v := range rawVariables {
-		Variables[k] = ExpandLength(v, maxLength)
-	}
-
-	// join all together to make list of map variable
-	for i := 1; i <= maxLength; i++ {
-		variable := make(map[string]string)
-		for k, v := range Variables {
-			variable[k] = v[i]
-		}
-		realVariables = append(realVariables, variable)
-	}
-
-	return realVariables
 }
 
 // ParseFuzzRequest parse request recive in API server
@@ -306,45 +247,38 @@ func ParseFuzzRequest(record libs.Record, sign libs.Signature) []libs.Request {
 
 // ParsePayloads parse payload to replace
 func ParsePayloads(sign libs.Signature) []string {
-	payloads := []string{}
-	payloads = append(payloads, sign.Payloads...)
-	if len(sign.PayloadLists) > 0 {
-		for _, payloadFile := range sign.PayloadLists {
-			realPayloads := ReadingFile(payloadFile)
-			if len(realPayloads) > 0 {
-				payloads = append(payloads, realPayloads...)
-			}
-		}
-	} else {
-		payloads = append(payloads, "")
-	}
-
-	for index, value := range payloads {
-		// strip out blank line
+	rawPayloads := []string{}
+	rawPayloads = append(rawPayloads, sign.Payloads...)
+	// strip out blank line
+	for index, value := range rawPayloads {
 		if strings.Trim(value, " ") == "" {
-			payloads = append(payloads[:index], payloads[index+1:]...)
+			rawPayloads = append(rawPayloads[:index], rawPayloads[index+1:]...)
 		}
 	}
 
-	// replace payload with variables
 	var realPayloads []string
+	// check if use variables or not
 	if len(sign.Variables) > 0 {
 		realVariables := ParseVariable(sign)
+		// replace payload with variables
 		if len(realVariables) > 0 {
 			for _, variable := range realVariables {
-				target := make(map[string]string)
-				// replace here
-				for k, v := range variable {
-					target[k] = v
+				for _, payload := range rawPayloads {
+					target := make(map[string]string)
+					// replace here
+					for k, v := range variable {
+						target[k] = v
+					}
+					payload := ResolveVariable(payload, target)
+					realPayloads = append(realPayloads, payload)
 				}
-				for _, payload := range payloads {
-					realPayloads = append(realPayloads, ResolveVariable(payload, target))
-				}
-
 			}
 		}
 	} else {
-		realPayloads = payloads
+		// just append the payload
+		for _, payload := range rawPayloads {
+			realPayloads = append(realPayloads, ResolveVariable(payload, sign.Target))
+		}
 	}
 	return realPayloads
 }

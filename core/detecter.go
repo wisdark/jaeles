@@ -7,9 +7,9 @@ import (
 	"strings"
 
 	"github.com/Jeffail/gabs"
-	"github.com/go-resty/resty"
 	"github.com/jaeles-project/jaeles/database"
 	"github.com/jaeles-project/jaeles/libs"
+	"github.com/parnurzeal/gorequest"
 
 	"github.com/robertkrimen/otto"
 )
@@ -154,7 +154,7 @@ func RegexCount(component string, analyzeString string) int {
 	if err != nil {
 		return 0
 	}
-	matches := r.FindAllStringIndex("A B C B A", -1)
+	matches := r.FindAllStringIndex(component, -1)
 	return len(matches)
 }
 
@@ -174,12 +174,7 @@ func PollCollab(record libs.Record, analyzeString string) (string, bool) {
 
 	// poll directly
 	url := fmt.Sprintf("http://polling.burpcollaborator.net/burpresults?biid=%v", secretCollab)
-	client := resty.New()
-	resp, err := client.R().Get(url)
-	if err != nil {
-		return "", false
-	}
-	response := string(resp.Body())
+	_, response, _ := gorequest.New().Get(url).End()
 	jsonParsed, _ := gabs.ParseJSON([]byte(response))
 	exists := jsonParsed.Exists("responses")
 	if exists == false {

@@ -12,10 +12,11 @@ type Signature struct {
 		OS       string
 	}
 
-	Variables  []map[string]string
 	Origin     Request
+	Requests   []Request
 	RawRequest string
 	Payloads   []string
-	Requests   []Request
+	Params     []map[string]string
+	Variables  []map[string]string
 	Target     map[string]string
 }

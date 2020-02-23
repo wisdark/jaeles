@@ -6,10 +6,10 @@ import (
 	"path"
 	"time"
 
-	jwt "github.com/appleboy/gin-jwt"
-	"github.com/jaeles-project/jaeles/core"
+	jwt "github.com/appleboy/gin-jwt/v2"
 	"github.com/jaeles-project/jaeles/database"
 	"github.com/jaeles-project/jaeles/libs"
+	"github.com/jaeles-project/jaeles/utils"
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-contrib/static"
@@ -34,7 +34,9 @@ type User struct {
 // InitRouter start point of api server
 func InitRouter(options libs.Options, result chan libs.Record) {
 	// turn off Gin debug mode
-	gin.SetMode(gin.ReleaseMode)
+	if !options.Debug {
+		gin.SetMode(gin.ReleaseMode)
+	}
 	r := gin.New()
 	r.Use(gin.Logger())
 	r.Use(gin.Recovery())
@@ -45,11 +47,11 @@ func InitRouter(options libs.Options, result chan libs.Record) {
 
 	allowOrigin := "*"
 	secret := "something you have to change"
-	if options.JWTSecret != "" {
-		secret = options.JWTSecret
+	if options.Server.JWTSecret != "" {
+		secret = options.Server.JWTSecret
 	}
-	if options.Cors != "" {
-		allowOrigin = options.Cors
+	if options.Server.Cors != "" {
+		allowOrigin = options.Server.Cors
 	}
 
 	r.Use(cors.New(cors.Config{
@@ -62,7 +64,7 @@ func InitRouter(options libs.Options, result chan libs.Record) {
 
 	// the jwt middleware
 	authMiddleware, err := jwt.New(&jwt.GinJWTMiddleware{
-		Realm:       "test zone",
+		Realm:       "jaeles server",
 		Key:         []byte(secret),
 		Timeout:     time.Hour * 360,
 		MaxRefresh:  time.Hour * 720,
@@ -92,7 +94,7 @@ func InitRouter(options libs.Options, result chan libs.Record) {
 
 			// compare hashed password
 			realPassword := database.SelectUser(username)
-			if core.GenHash(password) == realPassword {
+			if utils.GenHash(password) == realPassword {
 				return &User{
 					UserName: username,
 					// only have one role for now
@@ -141,7 +143,7 @@ func InitRouter(options libs.Options, result chan libs.Record) {
 	auth.Use(authMiddleware.MiddlewareFunc())
 	{
 		auth.GET("/ping", Ping)
-		auth.POST("/parse", ReciveRequest(result))
+		auth.POST("/parse", ReceiveRequest(result))
 		auth.POST("/config/sign", UpdateDefaultSign)
 		auth.GET("/stats/vuln", GetStats)
 		auth.GET("/stats/sign", GetSignSummary)
@@ -151,7 +153,7 @@ func InitRouter(options libs.Options, result chan libs.Record) {
 		auth.GET("/record/:rid/", GetRecord)
 	}
 
-	if err := http.ListenAndServe(options.Bind, r); err != nil {
+	if err := http.ListenAndServe(options.Server.Bind, r); err != nil {
 		log.Fatal(err)
 	}
 

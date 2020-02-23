@@ -1,7 +1,12 @@
 .DS_STORE
 .goreleaser.yml
+.idea
+.vscode
+Makefile
 dist
 out
+passive-*
 old-out
 http-out
 test-sign
+test-scripts

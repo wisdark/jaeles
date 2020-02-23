@@ -3,6 +3,7 @@ package core
 import (
 	"encoding/base64"
 	"fmt"
+	"github.com/thoas/go-funk"
 	"math/rand"
 	"net/url"
 	"os/exec"
@@ -10,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/jaeles-project/jaeles/libs"
+	"github.com/jaeles-project/jaeles/utils"
 	"github.com/robertkrimen/otto"
 )
 
@@ -70,36 +72,31 @@ func ParseVariable(sign libs.Signature) []map[string]string {
 		}
 	}
 
+	// @TODO: Need to improve this
 	if len(rawVariables) == 2 {
-		tmpVar := make(map[string][]string)
-		secondVar := make(map[string][]string)
-		var maxKey string
-		for k, Variables := range rawVariables {
-			if len(Variables) == maxLength {
-				maxKey = k
-				tmpVar[k] = Variables
-			} else {
-				secondVar[k] = Variables
-			}
-		}
+		//([]string)
+		keys := funk.Keys(rawVariables).([]string)
+		list1 := rawVariables[keys[0]]
+		list2 := rawVariables[keys[1]]
 
-		for index := 0; index < maxLength; index++ {
-			for k, v := range secondVar {
-				for _, value := range v {
-					variable := make(map[string]string)
-					variable[maxKey] = tmpVar[maxKey][index]
-					variable[k] = value
-					realVariables = append(realVariables, variable)
-				}
+		for _, item1 := range list1 {
+			// loop in second var
+			for _, item2 := range list2 {
+				element := make(map[string]string)
+				element[keys[0]] = item1
+				element[keys[1]] = item2
+				realVariables = append(realVariables, element)
 			}
 		}
+		//fmt.Println("realVariables: ", realVariables)
+		//fmt.Println("len(realVariables): ", len(realVariables))
 		return realVariables
 	}
 
 	// make all variable to same length
 	Variables := make(map[string][]string)
 	for k, v := range rawVariables {
-		Variables[k] = ExpandLength(v, maxLength)
+		Variables[k] = utils.ExpandLength(v, maxLength)
 	}
 
 	// join all together to make list of map variable
@@ -120,11 +117,10 @@ func ParseVariable(sign libs.Signature) []map[string]string {
 		for k, v := range realVariables[index] {
 			val := fmt.Sprintf("%v%v", k, v)
 			if _, ok := seen[val]; !ok {
-				fmt.Println(k, v)
+				// fmt.Println(k, v)
 				seen[val] = true
 				uniqVariables = append(uniqVariables, realVariables[index])
 			}
-
 		}
 	}
 
@@ -140,9 +136,19 @@ func RunVariables(variableString string) []string {
 
 	vm := otto.New()
 
+	vm.Set("ExecJS", func(call otto.FunctionCall) otto.Value {
+		jscode := call.Argument(0).String()
+		value, err := vm.Run(jscode)
+		if err == nil {
+			data := value.String()
+			extra = append(extra, data)
+		}
+		return otto.Value{}
+	})
+
 	vm.Set("File", func(call otto.FunctionCall) otto.Value {
 		filename := call.Argument(0).String()
-		data := ReadingFile(filename)
+		data := utils.ReadingLines(filename)
 		if len(data) > 0 {
 			extra = append(extra, data...)
 		}

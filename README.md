@@ -3,7 +3,7 @@
   <img alt="Jaeles" src="https://image.flaticon.com/icons/svg/1432/1432425.svg" height="140" />
   <p align="center">
     <a href=""><img alt="Software License" src="https://img.shields.io/badge/license-MIT-brightgreen.svg?style=flat-square"></a>
-    <a href="https://github.com/jaeles-project/jaeles"><img alt="Release" src="https://img.shields.io/badge/version-beta%20v0.2-red.svg"></a>
+    <a href="https://github.com/jaeles-project/jaeles"><img alt="Release" src="https://img.shields.io/badge/version-beta%20v0.5-blue.svg"></a>
     <a href="https://inventory.rawsec.ml/tools.html#Jaeles"><img src="https://inventory.rawsec.ml/img/badges/Rawsec-inventoried-FF5050_flat.svg" alt="Rawsec&#39;s CyberSecurity Inventory"></a>
   </p>
 </p>
@@ -13,38 +13,43 @@
 ![Architecture](https://github.com/jaeles-project/jaeles-plugins/blob/master/imgs/jaeles-architecture.png?raw=true)
 
 ## Installation
+Download [precompiled version here](https://github.com/jaeles-project/jaeles/releases).
 
-```
-go get -u github.com/jaeles-project/jaeles
+If you have a Go environment, make sure you have **Go >= 1.13** with Go Modules enable and run the following command.
+
+```shell
+GO111MODULE=on go get -u github.com/jaeles-project/jaeles
 ```
 
 Please visit the [Official Documention](https://jaeles-project.github.io/) for more details.
 
-Checkout [Signature Repo](https://github.com/jaeles-project/jaeles-signatures) for base signature.
+**Note**: Checkout [Signature Repo](https://github.com/jaeles-project/jaeles-signatures) for base signature and passive signature.
 
 ## Usage
+
 More usage [here](https://jaeles-project.github.io/usage/)
 
 Example commands.
-```
-jaeles scan -u http://example.com
 
-jaeles scan -s signatures/common/phpdebug.yaml -U /tmp/list_of_urls.txt
+```shell
+jaeles scan -s 'jira' -s 'ruby' -u target.com
 
-jaeles scan --retry 3 --verbose -s "signatures/cves/jira-*" -U /tmp/list_of_urls.txt
-jaeles scan --retry 3 --verbose -s "signatures/fuzz/.*" -U /tmp/list_of_urls.txt
+jaeles scan -c 50 -s 'java' -x 'tomcat' -U list_of_urls.txt
 
-jaeles --verbose server -s sqli
+jaeles scan -c 50 -s '/tmp/custom-signature/.*' -U list_of_urls.txt
+
+cat urls.txt | grep 'interesting' | jaeles scan -c 50 -s 'fuzz/.*' -U list_of_urls.txt --proxy http://127.0.0.1:8080
+
+jaeles server --verbose -s sqli
 ```
 
 ## Showcases
 
-More showcase [here](https://jaeles-project.github.io/showcases/)
+|  ![apache-status.png](https://github.com/jaeles-project/jaeles-plugins/blob/master/imgs/apache-status.png?raw=true) [**Apache Server Status**](https://youtu.be/nkBcIvzi3H4)  |  ![tableau-dom-xss.png](https://github.com/jaeles-project/jaeles-plugins/blob/master/imgs/tableau-dom-xss.png?raw=true) [**Tableau DOM XSS CVE-2019-19719**](https://youtu.be/EG7Qmt8kt58) |
+|:----------:|:-------------:|
+| ![rabbitmq-cred.png](https://github.com/jaeles-project/jaeles-plugins/blob/master/imgs/rabbitmq-cred.png?raw=true) [**RabbitMQ Default Credentials**](https://youtu.be/ed4n1sCNu3s) | ![jenkins-xss.png](https://github.com/jaeles-project/jaeles-plugins/blob/master/imgs/jenkins-xss.png?raw=true) [**Jenkins XSS CVE-2020-2096**](https://youtu.be/JfihhEOEWSE) |
 
-[![asciicast](https://asciinema.org/a/281205.svg)](https://asciinema.org/a/281205)
-<p align="center">
-Detect Jira SSRF CVE-2019-8451
-</p>
+<h4 align='center'> More showcase can be found <a href="https://jaeles-project.github.io/showcases/">here</a></h4>
 
 ### Burp Integration
 
@@ -52,13 +57,18 @@ Detect Jira SSRF CVE-2019-8451
 
 Plugin can be found [here](https://github.com/jaeles-project/jaeles-plugins/blob/master/jaeles-burp.py) and Video Guide [here](https://youtu.be/1lxsYhfTq3M)
 
+## Mentions
+
+[My introduction slide about Jaeles](https://speakerdeck.com/j3ssie/jaeles-the-swiss-army-knife-for-automated-web-application-testing)
+
+
 ### Planned Features
 
 * Adding more signatures.
 * Adding more input sources.
 * Adding more APIs to get access to more properties of the request.
 * Adding proxy plugins to directly receive input from browser of http client.
-* Adding passive signature for passive checking each request.
+* ~~Adding passive signature for passive checking each request.~~
 * Adding more action on Web UI.
 * Integrate with many other tools.
 
@@ -75,10 +85,6 @@ Feel free to submit new signature to this [repo](https://github.com/jaeles-proje
 
 * Awesomes artworks are powered by [Freepik](http://freepik.com) at [flaticon.com](http://flaticon.com).
 
-## Mentions
-
-[My introduction slide about Jaeles](https://speakerdeck.com/j3ssie/jaeles-the-swiss-army-knife-for-automated-web-application-testing)
-
 ## In distributions
 
 [![Packaging status](https://repology.org/badge/vertical-allrepos/jaeles.svg)](https://repology.org/project/jaeles/versions)
@@ -88,7 +94,7 @@ Feel free to submit new signature to this [repo](https://github.com/jaeles-proje
 ### Code Contributors
 
 This project exists thanks to all the people who contribute. [[Contribute](CONTRIBUTING.md)].
-<a href="https://github.com/jaeles-project/jaeles/graphs/contributors"><img src="https://opencollective.com/jaeles-project/contributors.svg?width=890&button=false" /></a>
+<a href="https://github.com/jaeles-project/jaeles/graphs/contributors"><img src="https://opencollective.com/jaeles-project/contributors.svg?width=890" /></a>
 
 ### Financial Contributors
 

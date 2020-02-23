@@ -2,15 +2,13 @@ package core
 
 import (
 	"bufio"
-	"bytes"
 	"fmt"
+	"github.com/jaeles-project/jaeles/utils"
 	"io/ioutil"
-	"log"
 	"net/http"
 	"net/url"
 	"path/filepath"
 	"strings"
-	"text/template"
 
 	"github.com/jaeles-project/jaeles/database"
 	"github.com/jaeles-project/jaeles/libs"
@@ -22,11 +20,11 @@ import (
 func ParseSign(signFile string) (sign libs.Signature, err error) {
 	yamlFile, err := ioutil.ReadFile(signFile)
 	if err != nil {
-		log.Printf("yamlFile.Get err  #%v ", err)
+		utils.ErrorF("yamlFile.Get err  #%v - %v", err, signFile)
 	}
 	err = yaml.Unmarshal(yamlFile, &sign)
 	if err != nil {
-		log.Fatalf("Error: %v", err)
+		utils.ErrorF("Error: %v - %v", err, signFile)
 	}
 	// set some default value
 	if sign.Info.Category == "" {
@@ -45,9 +43,23 @@ func ParseSign(signFile string) (sign libs.Signature, err error) {
 	return sign, err
 }
 
+// ParsePassive parsing YAML passive file
+func ParsePassive(passiveFile string) (passive libs.Passive, err error) {
+	yamlFile, err := ioutil.ReadFile(passiveFile)
+	if err != nil {
+		utils.ErrorF("yamlFile.Get err  #%v - %v", err, passiveFile)
+	}
+	err = yaml.Unmarshal(yamlFile, &passive)
+	if err != nil {
+		utils.ErrorF("Error: %v - %v", err, passiveFile)
+	}
+	return passive, err
+}
+
 // ParseTarget parsing target and some variable for template
 func ParseTarget(raw string) map[string]string {
 	target := make(map[string]string)
+	target["Raw"] = raw
 	if raw == "" {
 		return target
 	}
@@ -60,7 +72,6 @@ func ParseTarget(raw string) map[string]string {
 		if err != nil {
 			return target
 		}
-		// fmt.Println("parse again")
 	}
 	var hostname string
 	var query string
@@ -104,6 +115,12 @@ func ParseTarget(raw string) map[string]string {
 	uu, _ := url.Parse(raw)
 	target["BaseURL"] = fmt.Sprintf("%v://%v", uu.Scheme, uu.Host)
 	target["Extension"] = filepath.Ext(target["BaseURL"])
+	return target
+}
+
+// MoreVariables get more options to render in sign template
+func MoreVariables(target map[string]string, sign libs.Signature, options libs.Options) map[string]string {
+	realTarget := target
 
 	ssrf := database.GetDefaultBurpCollab()
 	if ssrf != "" {
@@ -112,131 +129,168 @@ func ParseTarget(raw string) map[string]string {
 		target["oob"] = database.GetCollab()
 	}
 
-	return target
-}
-
-// MoreVariables get more options to render in sign template
-func MoreVariables(target map[string]string, options libs.Options) map[string]string {
-	realTarget := target
 	// more options
-	realTarget["homePath"] = options.RootFolder
+	realTarget["rootPath"] = options.RootFolder
+	realTarget["resourcePath"] = options.ResourcesFolder
 	realTarget["proxy"] = options.Proxy
 	realTarget["output"] = options.Output
-	return realTarget
-}
 
-// JoinURL just joining baseURL with path
-func JoinURL(base string, child string) string {
-	u, err := url.Parse(child)
-	if err != nil {
-		return ""
-	}
-	result, err := url.Parse(base)
-	if err != nil {
-		return ""
-	}
-	return result.ResolveReference(u).String()
-}
-
-// ParseRequest parse request part in YAML signature file
-func ParseRequest(req libs.Request, sign libs.Signature) []libs.Request {
-	var Reqs []libs.Request
-
-	if sign.Type == "list" || len(sign.Variables) > 0 {
-		realVariables := ParseVariable(sign)
-		// Replace template with variable
-		for _, variable := range realVariables {
-			target := sign.Target
-			// replace here
-			for k, v := range variable {
-				target[k] = v
-			}
-
-			// in case we only want to run a middleware alone
-			if req.Raw != "" {
-				rawReq := ResolveVariable(req.Raw, target)
-				burpReq := ParseBurpRequest(rawReq)
-				burpReq.Detections = ResolveDetection(req.Detections, target)
-				burpReq.Middlewares = ResolveDetection(req.Middlewares, target)
-				Reqs = append(Reqs, burpReq)
-			}
-			if req.Path == "" && funk.IsEmpty(req.Middlewares) {
-				continue
-			} else if !funk.IsEmpty(req.Middlewares) {
-				Req := req
-				Req.Middlewares = ResolveDetection(req.Middlewares, target)
-				Reqs = append(Reqs, Req)
-				continue
-			}
-			Req := req
-			Req.URL = ResolveVariable(req.Path, target)
-			Req.Body = ResolveVariable(req.Body, target)
-			Req.Headers = ResolveHeader(req.Headers, target)
-			Req.Detections = ResolveDetection(req.Detections, target)
-			Req.Middlewares = ResolveDetection(req.Middlewares, target)
-			Req.Redirect = req.Redirect
-			if Req.URL != "" {
-				Reqs = append(Reqs, Req)
+	// default params in signature
+	signParams := sign.Params
+	if len(signParams) > 0 {
+		for _, param := range signParams {
+			for k, v := range param {
+				// variable as a script
+				if strings.Contains(v, "(") && strings.Contains(v, ")") {
+					newValue := RunVariables(v)
+					if len(newValue) > 0 {
+						realTarget[k] = newValue[0]
+					}
+				} else {
+					realTarget[k] = v
+				}
 			}
 		}
 	}
-	if sign.Type == "" || sign.Type == "single" {
-		Req := req
-		target := sign.Target
-		// in case we only want to run a middleware alone
 
+	// more params
+	if len(options.Params) > 0 {
+		params := ParseParams(options.Params)
+		if len(params) > 0 {
+			for k, v := range params {
+				realTarget[k] = v
+			}
+		}
+	}
+	return realTarget
+}
+
+// ParseParams parse more params from cli
+func ParseParams(rawParams []string) map[string]string {
+	params := make(map[string]string)
+
+	for _, item := range rawParams {
+		if strings.Contains(item, "=") {
+			data := strings.Split(item, "=")
+			params[data[0]] = strings.Replace(item, data[0]+"=", "", -1)
+		}
+	}
+	return params
+}
+
+// ParseOrigin parse origin request
+func ParseOrigin(req libs.Request, sign libs.Signature, options libs.Options) libs.Request {
+	target := sign.Target
+	// resolve some parts with global variables first
+	req.Target = target
+	req.URL = ResolveVariable(req.URL, target)
+	// @NOTE: backward compatible
+	if req.URL == "" && req.Path != "" {
+		req.URL = ResolveVariable(req.Path, target)
+	}
+	req.Body = ResolveVariable(req.Body, target)
+	req.Headers = ResolveHeader(req.Headers, target)
+	req.Middlewares = ResolveDetection(req.Middlewares, target)
+	req.Conclusions = ResolveDetection(req.Conclusions, target)
+
+	// parse raw request
+	if req.Raw != "" {
+		rawReq := ResolveVariable(req.Raw, target)
+		burpReq := ParseBurpRequest(rawReq)
+		burpReq.Detections = ResolveDetection(req.Detections, target)
+		burpReq.Middlewares = ResolveDetection(req.Middlewares, target)
+		burpReq.Conclusions = ResolveDetection(req.Conclusions, target)
+		return burpReq
+	}
+	return req
+}
+
+// ParseRequest parse request part in YAML signature file
+func ParseRequest(req libs.Request, sign libs.Signature, options libs.Options) []libs.Request {
+	var Reqs []libs.Request
+	target := sign.Target
+
+	// resolve some parts with global variables first
+	req.Target = target
+	req.URL = ResolveVariable(req.URL, target)
+	// @NOTE: backward compatible
+	if req.URL == "" && req.Path != "" {
+		req.URL = ResolveVariable(req.Path, target)
+	}
+	req.Body = ResolveVariable(req.Body, target)
+	req.Headers = ResolveHeader(req.Headers, target)
+	req.Middlewares = ResolveDetection(req.Middlewares, target)
+	req.Conditions = ResolveDetection(req.Conditions, target)
+
+	if sign.Type != "fuzz" {
+		// in case we only want to run a middleware alone
 		if req.Raw != "" {
 			rawReq := ResolveVariable(req.Raw, target)
 			burpReq := ParseBurpRequest(rawReq)
 			burpReq.Detections = ResolveDetection(req.Detections, target)
-			Req.Middlewares = ResolveDetection(req.Middlewares, target)
+			burpReq.Middlewares = ResolveDetection(req.Middlewares, target)
 			Reqs = append(Reqs, burpReq)
 		}
-		if req.Path != "" {
-			Req.URL = ResolveVariable(req.Path, target)
-			Req.Body = ResolveVariable(req.Body, target)
-			Req.Headers = ResolveHeader(req.Headers, target)
-			Req.Detections = ResolveDetection(req.Detections, target)
-			Req.Middlewares = ResolveDetection(req.Middlewares, target)
-			Req.Redirect = req.Redirect
-			if Req.URL != "" {
-				Reqs = append(Reqs, Req)
-			}
+
+		// if req.path is blank
+		if req.URL == "" && funk.IsEmpty(req.Middlewares) {
+			return Reqs
 		} else if !funk.IsEmpty(req.Middlewares) {
+			Req := req
 			Req.Middlewares = ResolveDetection(req.Middlewares, target)
 			Reqs = append(Reqs, Req)
+			return Reqs
 		}
+		req.Detections = ResolveDetection(req.Detections, target)
+		// normal requests here
+		Req := req
+		Req.Redirect = req.Redirect
+		if Req.URL != "" {
+			Reqs = append(Reqs, Req)
+		}
+		return Reqs
 	}
 
+	// start parse fuzz req
 	// only take URL as a input from cli
-	if sign.Type == "fuzz" {
-		target := sign.Target
-		var record libs.Record
-		var Req libs.Request
-		// incase we have -r options
-		if req.Raw != "" {
-			rawReq := ResolveVariable(req.Raw, target)
-			Req = ParseBurpRequest(rawReq)
-			Req.Generators = req.Generators
-			Req.Detections = req.Detections
-		} else {
-			Req = req
-		}
+	var record libs.Record
+
+	// parse raw request in case we have -r options as a origin request
+	if req.Raw != "" {
+		rawReq := ResolveVariable(req.Raw, target)
+		burpReq := ParseBurpRequest(rawReq)
+		// resolve again with custom delimiter generator
+		burpReq.Generators = req.Generators
+		burpReq.Detections = req.Detections
+		burpReq.Middlewares = req.Middlewares
+		record.OriginReq = burpReq
+	} else {
 		record.OriginReq.URL = target["URL"]
-		record.Request = Req
-		reqs := ParseFuzzRequest(record, sign)
-		if len(reqs) > 0 {
-			Reqs = append(Reqs, reqs...)
-		}
 	}
-	return Reqs
+
+	record.Request = req
+	reqs := ParseFuzzRequest(record, sign)
+	if len(reqs) > 0 {
+		Reqs = append(Reqs, reqs...)
+	}
+	utils.DebugF("[New Parsed Reuqest] %v", len(Reqs))
+
+	// repeat section
+	if req.Repeat == 0 {
+		return Reqs
+	}
+	realReqsWithRepeat := Reqs
+	for i := 0; i < req.Repeat-1; i++ {
+		realReqsWithRepeat = append(realReqsWithRepeat, Reqs...)
+	}
+	return realReqsWithRepeat
 }
 
 // ParseFuzzRequest parse request recive in API server
 func ParseFuzzRequest(record libs.Record, sign libs.Signature) []libs.Request {
 	req := record.Request
-	var Reqs []libs.Request
 
+	var Reqs []libs.Request
 	// color.Green("-- Start do Injecting")
 	if req.URL == "" {
 		req.URL = record.OriginReq.URL
@@ -247,7 +301,7 @@ func ParseFuzzRequest(record libs.Record, sign libs.Signature) []libs.Request {
 
 // ParsePayloads parse payload to replace
 func ParsePayloads(sign libs.Signature) []string {
-	rawPayloads := []string{}
+	var rawPayloads []string
 	rawPayloads = append(rawPayloads, sign.Payloads...)
 	// strip out blank line
 	for index, value := range rawPayloads {
@@ -255,32 +309,7 @@ func ParsePayloads(sign libs.Signature) []string {
 			rawPayloads = append(rawPayloads[:index], rawPayloads[index+1:]...)
 		}
 	}
-
-	var realPayloads []string
-	// check if use variables or not
-	if len(sign.Variables) > 0 {
-		realVariables := ParseVariable(sign)
-		// replace payload with variables
-		if len(realVariables) > 0 {
-			for _, variable := range realVariables {
-				for _, payload := range rawPayloads {
-					target := make(map[string]string)
-					// replace here
-					for k, v := range variable {
-						target[k] = v
-					}
-					payload := ResolveVariable(payload, target)
-					realPayloads = append(realPayloads, payload)
-				}
-			}
-		}
-	} else {
-		// just append the payload
-		for _, payload := range rawPayloads {
-			realPayloads = append(realPayloads, ResolveVariable(payload, sign.Target))
-		}
-	}
-	return realPayloads
+	return rawPayloads
 }
 
 // ParseBurpRequest parse burp style request
@@ -364,12 +393,12 @@ func ParseBurpResponse(rawReq string, rawRes string) (res libs.Response) {
 	return res
 }
 
-// ParseRequestFromServer parse request recive from API server
+// ParseRequestFromServer parse request receive from API server
 func ParseRequestFromServer(record *libs.Record, req libs.Request, sign libs.Signature) {
 	if req.Raw != "" {
 		parsedReq := ParseBurpRequest(req.Raw)
 		// check if parse request ok
-		if parsedReq.Method != "" {
+		if parsedReq.Method != "ParseRequest" {
 			record.Request = parsedReq
 		} else {
 			record.Request = record.OriginReq
@@ -415,51 +444,10 @@ func ParseRequestFromServer(record *libs.Record, req libs.Request, sign libs.Sig
 	record.Request.Middlewares = req.Middlewares
 	record.Request.Redirect = req.Redirect
 
-	// resolve some template
+	// resolve template
 	target := ParseTarget(record.Request.URL)
 	record.Request.URL = ResolveVariable(record.Request.Path, target)
 	record.Request.Body = ResolveVariable(record.Request.Body, target)
 	record.Request.Headers = ResolveHeader(record.Request.Headers, target)
-	// record.Request.Detections = ResolveDetection(req.Detections, target)
-	record.Request.Detections = req.Detections
-}
-
-/* Resolve template part */
-// ResolveDetection resolve detection part in YAML signature file
-func ResolveDetection(detections []string, target map[string]string) []string {
-	var realDetections []string
-	for _, detect := range detections {
-		realDetections = append(realDetections, ResolveVariable(detect, target))
-	}
-	return realDetections
-}
-
-// ResolveHeader resolve headers part in YAML signature file
-func ResolveHeader(headers []map[string]string, target map[string]string) []map[string]string {
-	// realHeaders := headers
-	var realHeaders []map[string]string
-
-	for _, head := range headers {
-		realHeader := make(map[string]string)
-		for key, value := range head {
-			realKey := ResolveVariable(key, target)
-			realVal := ResolveVariable(value, target)
-			realHeader[realKey] = realVal
-		}
-		realHeaders = append(realHeaders, realHeader)
-	}
-
-	return realHeaders
-}
-
-// ResolveVariable resolve template from signature file
-func ResolveVariable(format string, data map[string]string) string {
-	t := template.Must(template.New("").Parse(format))
-
-	buf := &bytes.Buffer{}
-	err := t.Execute(buf, data)
-	if err != nil {
-		return format
-	}
-	return buf.String()
+	record.Request.Detections = ResolveDetection(req.Detections, target)
 }

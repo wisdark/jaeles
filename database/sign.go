@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"github.com/jaeles-project/jaeles/utils"
 	"io/ioutil"
+	"os"
 	"regexp"
 	"strings"
 
@@ -24,7 +25,9 @@ func SelectSign(signName string) []string {
 	var signs []models.Signature
 	DB.Find(&signs)
 
-	//if signName == "*" || signName == "" {
+	if signName == "*" || signName == "" {
+		fmt.Fprintf(os.Stderr, "[Warning] You literally just select ALL signatures. I hope you know what are you doing.\n")
+	}
 	//	DB.Find(&signs)
 	//} else {
 	//	DB.Where("sign_id LIKE ? OR name LIKE ?", fmt.Sprintf("%%%v%%", signName), fmt.Sprintf("%%%v%%", signName)).Find(&signs)
@@ -38,7 +41,7 @@ func SelectSign(signName string) []string {
 		}
 		// grep info
 		info := fmt.Sprintf("%v|%v|%v|tech:%v", sign.SignID, strings.ToLower(sign.Name), sign.AsbPath, sign.Tech)
-		if strings.Contains(info, signName) {
+		if strings.Contains(strings.ToLower(info), strings.ToLower(signName)) {
 			selectedSigns = append(selectedSigns, sign.AsbPath)
 			continue
 		}

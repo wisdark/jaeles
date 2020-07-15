@@ -26,23 +26,49 @@ func Analyze(options libs.Options, record *libs.Record) {
 	}
 
 	for _, analyze := range record.Request.Detections {
-		utils.DebugF("[Detection] %v", analyze)
 		extra, result := RunDetector(*record, analyze)
 		if extra != "" {
 			record.ExtraOutput = extra
 		}
 		if result == true {
+			record.DetectString = analyze
 			if options.Verbose {
 				color.Magenta("[Found] %v", analyze)
 			}
+
+			// do passive analyze if got called from detector
+			if strings.Contains(strings.ToLower(analyze), "dopassive") {
+				PassiveAnalyze(options, *record)
+				record.DonePassive = true
+			}
+
 			var outputName string
 			if options.NoOutput == false {
 				outputName = StoreOutput(*record, options)
 				record.RawOutput = outputName
-				database.ImportRecord(*record)
+				if !options.NoDB {
+					database.ImportRecord(*record)
+				}
 			}
-			color.Green("[Vulnerable][%v] %v %v", record.Sign.Info.Risk, record.Request.URL, outputName)
+			vulnInfo := fmt.Sprintf("[%v][%v] %v", record.Sign.ID, record.Sign.Info.Risk, record.Request.URL)
+			if options.Quiet {
+				record.Request.Target["VulnURL"] = record.Request.URL
+				fmt.Printf("%v\n", ResolveVariable(options.QuietFormat, record.Request.Target))
+			} else {
+				color.Green("[Vulnerable]%v %v", vulnInfo, outputName)
+			}
+
+			if options.FoundCmd != "" {
+				// add some more variables for notification
+				record.Request.Target["vulnInfo"] = vulnInfo
+				record.Request.Target["vulnOut"] = outputName
+				record.Request.Target["notiText"] = vulnInfo
+				options.FoundCmd = ResolveVariable(options.FoundCmd, record.Request.Target)
+				Execution(options.FoundCmd)
+			}
+
 		}
+		utils.DebugF("[Detection] %v -- %v", analyze, result)
 	}
 }
 
@@ -52,21 +78,26 @@ func StoreOutput(rec libs.Record, options libs.Options) string {
 	if rec.Request.URL == "" {
 		rec.Request.URL = rec.Request.Target["URL"]
 	}
-	head := fmt.Sprintf("[%v] - %v\n\n", rec.Sign.ID, rec.Request.URL)
-	content := head
+	head := fmt.Sprintf("[%v][%v-%v] - %v\n", rec.Sign.ID, rec.Sign.Info.Confidence, rec.Sign.Info.Risk, rec.Request.URL)
+	sInfo := fmt.Sprintf("[Sign-Info][%v-%v] - %v - %v\n", rec.Sign.Info.Confidence, rec.Sign.Info.Risk, rec.Sign.RawPath, rec.Sign.Info.Name)
+	content := "[Vuln-Info]" + head + sInfo + fmt.Sprintf("[Detect-String] - %v\n\n", rec.DetectString)
 	if rec.Request.MiddlewareOutput != "" {
 		content += strings.Join(rec.Request.Middlewares, "\n")
-		content += fmt.Sprintf("\n%v\n", strings.Repeat("-", 50))
+		content += fmt.Sprintf("\n<<%v>>\n", strings.Repeat("-", 50))
 		content += rec.Request.MiddlewareOutput
 	}
+
 	if rec.ExtraOutput != "" {
-		content += strings.Join(rec.Request.Middlewares, "\n")
-		content += fmt.Sprintf("\n%v\n", strings.Repeat("-", 50))
-		content += rec.ExtraOutput
+		content += fmt.Sprintf("%v\n", strings.Repeat("-", 50))
+		content += fmt.Sprintf("[Matches String]\n")
+		content += strings.TrimSpace(rec.ExtraOutput)
+		content += fmt.Sprintf("\n")
 	}
-	if rec.ExtraOutput == "" && rec.Request.MiddlewareOutput == "" {
+
+	content += fmt.Sprintf(">>>>%v\n", strings.Repeat("-", 50))
+	if rec.Request.MiddlewareOutput == "" {
 		content += rec.Request.Beautify
-		content += fmt.Sprintf("\n%v\n", strings.Repeat("-", 50))
+		content += fmt.Sprintf("\n%v<<<<\n", strings.Repeat("-", 50))
 		content += rec.Response.Beautify
 	}
 
@@ -102,5 +133,7 @@ func StoreOutput(rec libs.Record, options libs.Options) string {
 	sum := fmt.Sprintf("%v - %v", strings.TrimSpace(head), p)
 	utils.AppendToContent(options.SummaryOutput, sum)
 
+	vulnSum := fmt.Sprintf("[%v][%v] - %v", rec.Sign.ID, rec.Sign.Info.Risk, rec.Request.Target["Raw"])
+	utils.AppendToContent(options.SummaryVuln, vulnSum)
 	return p
 }

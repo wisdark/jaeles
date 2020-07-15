@@ -2,18 +2,30 @@ package libs
 
 // Record all information about request
 type Record struct {
-	OriginReq   Request
-	OriginRes   Response
-	Request     Request
-	Response    Response
-	Sign        Signature
-	RawOutput   string
-	ExtraOutput string
-	ScanID      string
+	DonePassive   bool
+	SelectPassive string
+	OriginReq     Request
+	OriginRes     Response
+	Origins       []Origin
+	Request       Request
+	Response      Response
+	Sign          Signature
+	RawOutput     string
+	ExtraOutput   string
+	DetectString  string
+	ScanID        string
+}
+
+// Origin contain map of origins
+type Origin struct {
+	Label     string
+	ORequest  Request  `yaml:"origin_req"`
+	OResponse Response `yaml:"origin_res"`
 }
 
 // Request all information about request
 type Request struct {
+	RawInput          string
 	Engine            string
 	Timeout           int
 	Repeat            int
@@ -32,6 +44,7 @@ type Request struct {
 	Beautify          string
 	MiddlewareOutput  string
 	Raw               string
+	Res               string
 	Conditions        []string
 	Middlewares       []string
 	Conclusions       []string

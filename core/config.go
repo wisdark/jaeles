@@ -10,6 +10,7 @@ import (
 	"io/ioutil"
 	"os"
 	"path"
+	"path/filepath"
 )
 
 // InitConfig init config
@@ -50,7 +51,6 @@ func InitConfig(options *libs.Options) {
 		b, _ := ioutil.ReadFile(configPath)
 		v.ReadConfig(bytes.NewBuffer(b))
 	}
-	// config.defaultSign = fmt.Sprintf("%v", v.Get("defaultSign"))
 
 	// WARNING: change me if you really want to deploy on remote server
 	// allow all origin
@@ -80,6 +80,7 @@ func InitConfig(options *libs.Options) {
 	// set some default config
 	options.PassiveFolder = path.Join(utils.NormalizePath(options.RootFolder), "passives")
 	options.ResourcesFolder = path.Join(utils.NormalizePath(options.RootFolder), "resources")
+	options.ThirdPartyFolder = path.Join(utils.NormalizePath(options.RootFolder), "thirdparty")
 
 	// create output folder
 	var err error
@@ -90,6 +91,17 @@ func InitConfig(options *libs.Options) {
 	}
 	if options.SummaryOutput == "" {
 		options.SummaryOutput = path.Join(options.Output, "jaeles-summary.txt")
+	}
+	if options.SummaryVuln == "" {
+		options.SummaryVuln = path.Join(options.Output, "vuln-summary.txt")
+	}
+
+	if options.PassiveOutput == "" {
+		passiveOut := "passive-" + path.Base(options.Output)
+		options.PassiveOutput = path.Join(filepath.Dir(path.Clean(options.Output)), passiveOut)
+	}
+	if options.PassiveSummary == "" {
+		options.PassiveSummary = path.Join(options.PassiveOutput, "jaeles-passive-summary.txt")
 	}
 	utils.InforF("Summary output: %v", options.SummaryOutput)
 }

@@ -3,6 +3,7 @@ package core
 import (
 	"bufio"
 	"fmt"
+	"github.com/Jeffail/gabs/v2"
 	"github.com/jaeles-project/jaeles/utils"
 	"io/ioutil"
 	"net/http"
@@ -20,13 +21,18 @@ import (
 func ParseSign(signFile string) (sign libs.Signature, err error) {
 	yamlFile, err := ioutil.ReadFile(signFile)
 	if err != nil {
-		utils.ErrorF("yamlFile.Get err  #%v - %v", err, signFile)
+		utils.ErrorF("Error parsing Signature:  #%v - %v", err, signFile)
 	}
 	err = yaml.Unmarshal(yamlFile, &sign)
 	if err != nil {
 		utils.ErrorF("Error: %v - %v", err, signFile)
 	}
 	// set some default value
+	sign.Parallel = true
+	if sign.Single {
+		sign.Parallel = false
+	}
+	sign.RawPath = signFile
 	if sign.Info.Category == "" {
 		if strings.Contains(sign.ID, "-") {
 			sign.Info.Category = strings.Split(sign.ID, "-")[0]
@@ -40,6 +46,9 @@ func ParseSign(signFile string) (sign libs.Signature, err error) {
 	if sign.Info.Risk == "" {
 		sign.Info.Risk = "Potential"
 	}
+	if sign.Info.Confidence == "" {
+		sign.Info.Confidence = "Tentative"
+	}
 	return sign, err
 }
 
@@ -47,11 +56,17 @@ func ParseSign(signFile string) (sign libs.Signature, err error) {
 func ParsePassive(passiveFile string) (passive libs.Passive, err error) {
 	yamlFile, err := ioutil.ReadFile(passiveFile)
 	if err != nil {
-		utils.ErrorF("yamlFile.Get err  #%v - %v", err, passiveFile)
+		utils.ErrorF("Error parsing Signature:  #%v - %v", err, passiveFile)
 	}
 	err = yaml.Unmarshal(yamlFile, &passive)
 	if err != nil {
 		utils.ErrorF("Error: %v - %v", err, passiveFile)
+	}
+	if passive.Risk == "" {
+		passive.Risk = "Potential"
+	}
+	if passive.Confidence == "" {
+		passive.Confidence = "Firm"
 	}
 	return passive, err
 }
@@ -86,7 +101,6 @@ func ParseTarget(raw string) map[string]string {
 		} else {
 			port = "80"
 		}
-
 		hostname = u.Hostname()
 	} else {
 		// ignore common port in Host
@@ -114,14 +128,36 @@ func ParseTarget(raw string) map[string]string {
 
 	uu, _ := url.Parse(raw)
 	target["BaseURL"] = fmt.Sprintf("%v://%v", uu.Scheme, uu.Host)
-	target["Extension"] = filepath.Ext(target["BaseURL"])
+	target["Extension"] = filepath.Ext(target["URL"])
+	return target
+}
+
+// ParseInputFormat format input
+func ParseInputFormat(raw string) map[string]string {
+	target := make(map[string]string)
+	target["RawFormat"] = raw
+
+	jsonParsed, err := gabs.ParseJSON([]byte(raw))
+	if err != nil {
+		return target
+	}
+
+	// parse base URL too
+	rawURL, e := jsonParsed.ChildrenMap()["URL"]
+	if e == true {
+		target = ParseTarget(fmt.Sprintf("%v", rawURL.Data()))
+	}
+
+	// override whole things
+	for k, v := range jsonParsed.ChildrenMap() {
+		target[k] = fmt.Sprintf("%v", v.Data())
+	}
 	return target
 }
 
 // MoreVariables get more options to render in sign template
 func MoreVariables(target map[string]string, sign libs.Signature, options libs.Options) map[string]string {
 	realTarget := target
-
 	ssrf := database.GetDefaultBurpCollab()
 	if ssrf != "" {
 		target["oob"] = ssrf
@@ -130,8 +166,10 @@ func MoreVariables(target map[string]string, sign libs.Signature, options libs.O
 	}
 
 	// more options
-	realTarget["rootPath"] = options.RootFolder
-	realTarget["resourcePath"] = options.ResourcesFolder
+	realTarget["Root"] = options.RootFolder
+	realTarget["Version"] = fmt.Sprintf("Jaeles - %v", libs.VERSION)
+	realTarget["Resources"] = options.ResourcesFolder
+	realTarget["ThirdParty"] = options.ThirdPartyFolder
 	realTarget["proxy"] = options.Proxy
 	realTarget["output"] = options.Output
 
@@ -140,8 +178,12 @@ func MoreVariables(target map[string]string, sign libs.Signature, options libs.O
 	if len(signParams) > 0 {
 		for _, param := range signParams {
 			for k, v := range param {
+				if strings.Contains(v, "{{.") && strings.Contains(v, "}}") {
+					v = ResolveVariable(v, realTarget)
+				}
+
 				// variable as a script
-				if strings.Contains(v, "(") && strings.Contains(v, ")") {
+				if strings.Contains(v, "(") && strings.HasSuffix(v, ")") {
 					newValue := RunVariables(v)
 					if len(newValue) > 0 {
 						realTarget[k] = newValue[0]
@@ -162,6 +204,7 @@ func MoreVariables(target map[string]string, sign libs.Signature, options libs.O
 			}
 		}
 	}
+
 	return realTarget
 }
 
@@ -178,11 +221,27 @@ func ParseParams(rawParams []string) map[string]string {
 	return params
 }
 
+// ParseRawHeaders parse more headers from cli
+func ParseRawHeaders(rawHeaders []string) map[string]string {
+	headers := make(map[string]string)
+
+	for _, item := range rawHeaders {
+		if strings.Contains(item, ":") {
+			data := strings.Split(item, ":")
+			headers[data[0]] = strings.Join(data[1:], "")
+		}
+	}
+	return headers
+}
+
 // ParseOrigin parse origin request
-func ParseOrigin(req libs.Request, sign libs.Signature, options libs.Options) libs.Request {
+func ParseOrigin(req libs.Request, sign libs.Signature, _ libs.Options) libs.Request {
 	target := sign.Target
 	// resolve some parts with global variables first
 	req.Target = target
+	if strings.Contains(req.Method, "{{.") {
+		req.Method = ResolveVariable(req.Method, target)
+	}
 	req.URL = ResolveVariable(req.URL, target)
 	// @NOTE: backward compatible
 	if req.URL == "" && req.Path != "" {
@@ -192,6 +251,7 @@ func ParseOrigin(req libs.Request, sign libs.Signature, options libs.Options) li
 	req.Headers = ResolveHeader(req.Headers, target)
 	req.Middlewares = ResolveDetection(req.Middlewares, target)
 	req.Conclusions = ResolveDetection(req.Conclusions, target)
+	req.Res = ResolveVariable(req.Res, target)
 
 	// parse raw request
 	if req.Raw != "" {
@@ -212,6 +272,9 @@ func ParseRequest(req libs.Request, sign libs.Signature, options libs.Options) [
 
 	// resolve some parts with global variables first
 	req.Target = target
+	if strings.Contains(req.Method, "{{.") {
+		req.Method = ResolveVariable(req.Method, target)
+	}
 	req.URL = ResolveVariable(req.URL, target)
 	// @NOTE: backward compatible
 	if req.URL == "" && req.Path != "" {
@@ -219,10 +282,27 @@ func ParseRequest(req libs.Request, sign libs.Signature, options libs.Options) [
 	}
 	req.Body = ResolveVariable(req.Body, target)
 	req.Headers = ResolveHeader(req.Headers, target)
+	req.Proxy = ResolveVariable(req.Proxy, target)
+	req.Res = ResolveVariable(req.Res, target)
+
+	// more headers from cli
+	if len(options.Headers) > 0 {
+		moreHeaders := ParseRawHeaders(options.Headers)
+		for k, v := range moreHeaders {
+			element := make(map[string]string)
+			element[k] = ResolveVariable(v, req.Target)
+			req.Headers = append(req.Headers, element)
+		}
+	}
+
 	req.Middlewares = ResolveDetection(req.Middlewares, target)
 	req.Conditions = ResolveDetection(req.Conditions, target)
+	req.Conclusions = ResolveDetection(req.Conclusions, target)
 
 	if sign.Type != "fuzz" {
+		if req.Res != "" {
+			Reqs = append(Reqs, req)
+		}
 		// in case we only want to run a middleware alone
 		if req.Raw != "" {
 			rawReq := ResolveVariable(req.Raw, target)
@@ -248,10 +328,11 @@ func ParseRequest(req libs.Request, sign libs.Signature, options libs.Options) [
 		if Req.URL != "" {
 			Reqs = append(Reqs, Req)
 		}
+
 		return Reqs
 	}
 
-	// start parse fuzz req
+	/* -------- Start parse fuzz req -------- */
 	// only take URL as a input from cli
 	var record libs.Record
 
@@ -275,6 +356,18 @@ func ParseRequest(req libs.Request, sign libs.Signature, options libs.Options) [
 	}
 	utils.DebugF("[New Parsed Reuqest] %v", len(Reqs))
 
+	//// return
+	//if len(Reqs) > 0 && len(req.Middlewares) > 0 {
+	//	var realReqs []libs.Request
+	//	for _, Req := range Reqs {
+	//		Req.Middlewares = ResolveDetection(req.Middlewares, Req.Target)
+	//		realReqs = append(realReqs, Req)
+	//	}
+	//	spew.Dump("Rest", realReqs)
+	//	//return realReqs
+	//	Reqs = realReqs
+	//}
+
 	// repeat section
 	if req.Repeat == 0 {
 		return Reqs
@@ -283,10 +376,11 @@ func ParseRequest(req libs.Request, sign libs.Signature, options libs.Options) [
 	for i := 0; i < req.Repeat-1; i++ {
 		realReqsWithRepeat = append(realReqsWithRepeat, Reqs...)
 	}
+
 	return realReqsWithRepeat
 }
 
-// ParseFuzzRequest parse request recive in API server
+// ParseFuzzRequest parse request receive in API server
 func ParseFuzzRequest(record libs.Record, sign libs.Signature) []libs.Request {
 	req := record.Request
 
@@ -339,14 +433,18 @@ func ParseBurpRequest(raw string) (req libs.Request) {
 			}
 		}
 	}
-	// fmt.Println(parsedReq.URL)
-	// parsedReq.URL.RequestURI = parsedReq.RequestURI
 	realReq.URL = parsedReq.URL.String()
 	realReq.Path = parsedReq.RequestURI
 	realReq.Headers = ParseHeaders(parsedReq.Header)
 
 	body, _ := ioutil.ReadAll(parsedReq.Body)
 	realReq.Body = string(body)
+	// net/http parse something weird here
+	if !strings.HasSuffix(raw, realReq.Body) {
+		if strings.Contains(raw, "\n\n") {
+			realReq.Body = strings.Split(raw, "\n\n")[1]
+		}
+	}
 
 	return realReq
 }
@@ -365,9 +463,16 @@ func ParseHeaders(rawHeaders map[string][]string) []map[string]string {
 
 // ParseBurpResponse parse burp style response
 func ParseBurpResponse(rawReq string, rawRes string) (res libs.Response) {
-	// var res libs.Response
-	readerr := bufio.NewReader(strings.NewReader(rawReq))
-	parsedReq, _ := http.ReadRequest(readerr)
+	utils.DebugF("Parsing response: %v", rawRes)
+
+	res.Beautify = rawRes
+	res.Body = rawRes
+	res.Length = len(rawRes)
+	var parsedReq *http.Request
+	if strings.TrimSpace(rawReq) != "" {
+		readerr := bufio.NewReader(strings.NewReader(rawReq))
+		parsedReq, _ = http.ReadRequest(readerr)
+	}
 
 	reader := bufio.NewReader(strings.NewReader(rawRes))
 	parsedRes, err := http.ReadResponse(reader, parsedReq)
@@ -379,7 +484,7 @@ func ParseBurpResponse(rawReq string, rawRes string) (res libs.Response) {
 	res.StatusCode = parsedRes.StatusCode
 
 	var headers []map[string]string
-	for name, value := range parsedReq.Header {
+	for name, value := range parsedRes.Header {
 		header := map[string]string{
 			name: strings.Join(value[:], ""),
 		}
@@ -389,12 +494,11 @@ func ParseBurpResponse(rawReq string, rawRes string) (res libs.Response) {
 
 	body, _ := ioutil.ReadAll(parsedRes.Body)
 	res.Body = string(body)
-
 	return res
 }
 
 // ParseRequestFromServer parse request receive from API server
-func ParseRequestFromServer(record *libs.Record, req libs.Request, sign libs.Signature) {
+func ParseRequestFromServer(record *libs.Record, req libs.Request, _ libs.Signature) {
 	if req.Raw != "" {
 		parsedReq := ParseBurpRequest(req.Raw)
 		// check if parse request ok
@@ -423,7 +527,7 @@ func ParseRequestFromServer(record *libs.Record, req libs.Request, sign libs.Sig
 	// header stuff
 	if len(req.Headers) > 0 {
 		realHeaders := req.Headers
-		keys := []string{}
+		var keys []string
 		for _, realHeader := range req.Headers {
 			for key := range realHeader {
 				keys = append(keys, key)

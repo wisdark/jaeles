@@ -20,26 +20,21 @@ func UpdatePlugins(options libs.Options) {
 		utils.InforF("Remove: %v", pluginPath)
 		os.RemoveAll(pluginPath)
 	}
-	r, err := git.PlainClone(pluginPath, false, &git.CloneOptions{
+	_, err := git.PlainClone(pluginPath, false, &git.CloneOptions{
 		URL:               url,
 		RecurseSubmodules: git.DefaultSubmoduleRecursionDepth,
 		Depth:             1,
 	})
+
 	if err != nil {
-		fmt.Println("Error to clone Plugins repo")
-	} else {
-		_, err = r.Head()
-		if err != nil {
-			fmt.Println("Error to clone Plugins repo")
-		}
+		utils.ErrorF("Error to clone Plugins repo: %v - %v", url, err)
+		return
 	}
 }
 
 // UpdateSignature update latest UI from UI repo
 func UpdateSignature(options libs.Options, customRepo string) {
 	signPath := path.Join(options.RootFolder, "base-signatures")
-	passivePath := path.Join(signPath, "passives")
-	resourcesPath := path.Join(signPath, "resources")
 
 	url := libs.SIGNREPO
 	if customRepo != "" {
@@ -51,36 +46,37 @@ func UpdateSignature(options libs.Options, customRepo string) {
 		utils.InforF("Remove: %v", signPath)
 		os.RemoveAll(signPath)
 		os.RemoveAll(options.PassiveFolder)
-		os.RemoveAll(options.PassiveFolder)
+		os.RemoveAll(options.ResourcesFolder)
+		os.RemoveAll(options.ThirdPartyFolder)
 	}
-	_, err := git.PlainClone(signPath, false, &git.CloneOptions{
-		Auth: &http.BasicAuth{
-			Username: options.Server.Username,
-			Password: options.Server.Password,
-		},
-		URL:               url,
-		RecurseSubmodules: git.DefaultSubmoduleRecursionDepth,
-		Depth:             1,
-		Progress:          os.Stdout,
-	})
+	if options.Server.Key != "" {
+		cmd := fmt.Sprintf("GIT_SSH_COMMAND='ssh -o StrictHostKeyChecking=no -i %v' git clone --depth=1 %v %v", options.Server.Key, url, signPath)
+		Execution(cmd)
+	} else {
+		var err error
+		if options.Server.Username != "" && options.Server.Password != "" {
+			_, err = git.PlainClone(signPath, false, &git.CloneOptions{
+				Auth: &http.BasicAuth{
+					Username: options.Server.Username,
+					Password: options.Server.Password,
+				},
+				URL:               url,
+				RecurseSubmodules: git.DefaultSubmoduleRecursionDepth,
+				Depth:             1,
+				Progress:          os.Stdout,
+			})
+		} else {
+			_, err = git.PlainClone(signPath, false, &git.CloneOptions{
+				URL:               url,
+				RecurseSubmodules: git.DefaultSubmoduleRecursionDepth,
+				Depth:             1,
+				Progress:          os.Stdout,
+			})
+		}
 
-	if err != nil {
-		utils.ErrorF("Error to clone Signature repo: %v - %v", url, err)
-		return
+		if err != nil {
+			utils.ErrorF("Error to clone Signature repo: %v - %v", url, err)
+			return
+		}
 	}
-
-	// move passive signatures to default passive
-	if utils.FolderExists(passivePath) {
-		utils.MoveFolder(passivePath, options.PassiveFolder)
-	}
-	if utils.FolderExists(resourcesPath) {
-		utils.MoveFolder(resourcesPath, options.ResourcesFolder)
-	}
-
 }
-
-// // UpdateOutOfBand renew things in Out of band check
-// func UpdateOutOfBand(options libs.Options) {
-// 	// http
-// 	// dns
-// }

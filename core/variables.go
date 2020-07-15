@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/jaeles-project/jaeles/libs"
 	"github.com/jaeles-project/jaeles/utils"
@@ -29,6 +30,9 @@ func ParseVariable(sign libs.Signature) []map[string]string {
 
 			// variable as a script
 			if strings.Contains(value, "(") && strings.Contains(value, ")") {
+				if strings.Contains(value, "{{.") && strings.Contains(value, "}}") {
+					value = ResolveVariable(value, sign.Target)
+				}
 				rawVariables[key] = RunVariables(value)
 			}
 			/*
@@ -73,21 +77,38 @@ func ParseVariable(sign libs.Signature) []map[string]string {
 	}
 
 	// @TODO: Need to improve this
-	if len(rawVariables) == 2 {
-		//([]string)
+	if len(rawVariables) > 1 && len(rawVariables) <= 3 {
 		keys := funk.Keys(rawVariables).([]string)
 		list1 := rawVariables[keys[0]]
 		list2 := rawVariables[keys[1]]
 
-		for _, item1 := range list1 {
-			// loop in second var
-			for _, item2 := range list2 {
-				element := make(map[string]string)
-				element[keys[0]] = item1
-				element[keys[1]] = item2
-				realVariables = append(realVariables, element)
+		if len(rawVariables) == 2 {
+			for _, item1 := range list1 {
+				// loop in second var
+				for _, item2 := range list2 {
+					element := make(map[string]string)
+					element[keys[0]] = item1
+					element[keys[1]] = item2
+					realVariables = append(realVariables, element)
+				}
+			}
+		} else if len(rawVariables) == 3 {
+			list3 := rawVariables[keys[2]]
+			for _, item1 := range list1 {
+				// loop in second var
+				for _, item2 := range list2 {
+					// loop in third var
+					for _, item3 := range list3 {
+						element := make(map[string]string)
+						element[keys[0]] = item1
+						element[keys[1]] = item2
+						element[keys[2]] = item3
+						realVariables = append(realVariables, element)
+					}
+				}
 			}
 		}
+
 		//fmt.Println("realVariables: ", realVariables)
 		//fmt.Println("len(realVariables): ", len(realVariables))
 		return realVariables
@@ -135,7 +156,6 @@ func RunVariables(variableString string) []string {
 	}
 
 	vm := otto.New()
-
 	vm.Set("ExecJS", func(call otto.FunctionCall) otto.Value {
 		jscode := call.Argument(0).String()
 		value, err := vm.Run(jscode)
@@ -148,9 +168,20 @@ func RunVariables(variableString string) []string {
 
 	vm.Set("File", func(call otto.FunctionCall) otto.Value {
 		filename := call.Argument(0).String()
+		filename = utils.NormalizePath(filename)
 		data := utils.ReadingLines(filename)
 		if len(data) > 0 {
 			extra = append(extra, data...)
+		}
+		return otto.Value{}
+	})
+
+	vm.Set("Content", func(call otto.FunctionCall) otto.Value {
+		filename := call.Argument(0).String()
+		filename = utils.NormalizePath(filename)
+		data := utils.GetFileContent(filename)
+		if len(data) > 0 {
+			extra = append(extra, data)
 		}
 		return otto.Value{}
 	})
@@ -211,6 +242,15 @@ func RunVariables(variableString string) []string {
 		return otto.Value{}
 	})
 
+	vm.Set("Base64Decode", func(call otto.FunctionCall) otto.Value {
+		raw := call.Argument(0).String()
+		data, err := base64.StdEncoding.DecodeString(raw)
+		if err == nil {
+			extra = append(extra, string(data))
+		}
+		return otto.Value{}
+	})
+
 	vm.Set("Base64EncodeByLines", func(call otto.FunctionCall) otto.Value {
 		data := SplitLines(call.Argument(0).String())
 		if len(data) == 0 {
@@ -239,26 +279,46 @@ func RunVariables(variableString string) []string {
 		return otto.Value{}
 	})
 
+	vm.Set("OSEnv", func(call otto.FunctionCall) otto.Value {
+		args := call.ArgumentList
+		name := args[0].String()
+		defaultValue := name
+		if len(args) >= 2 {
+			defaultValue = args[1].String()
+		}
+		if name != "" {
+			value := utils.GetOSEnv(name)
+			if value == name {
+				value = defaultValue
+			}
+			extra = append(extra, value)
+		}
+		return otto.Value{}
+	})
+
+	utils.DebugF("variableString: %v", variableString)
 	vm.Run(variableString)
 	return extra
 }
 
 // RandomString return a random string with length
 func RandomString(n int) string {
+	var seededRand = rand.New(rand.NewSource(time.Now().UnixNano()))
 	var letter = []rune("abcdefghijklmnopqrstuvwxyz")
 	b := make([]rune, n)
 	for i := range b {
-		b[i] = letter[rand.Intn(len(letter))]
+		b[i] = letter[seededRand.Intn(len(letter))]
 	}
 	return string(b)
 }
 
 // RandomNumber return a random number with length
 func RandomNumber(n int) string {
+	var seededRand = rand.New(rand.NewSource(time.Now().UnixNano()))
 	var letter = []rune("0123456789")
 	b := make([]rune, n)
 	for i := range b {
-		b[i] = letter[rand.Intn(len(letter))]
+		b[i] = letter[seededRand.Intn(len(letter))]
 	}
 	result := string(b)
 	if !strings.HasPrefix(result, "0") || len(result) == 1 {

@@ -6,7 +6,6 @@ import (
 	"github.com/robertkrimen/otto"
 	"os/exec"
 	"regexp"
-	"strconv"
 	"strings"
 )
 
@@ -61,7 +60,7 @@ func RunConclude(concludeScript string, record libs.Record, sign *libs.Signature
 		componentName := call.Argument(0).String()
 		analyzeString := call.Argument(1).String()
 		component := GetComponent(record, componentName)
-		validate := RegexSearch(component, analyzeString)
+		_, validate := RegexSearch(component, analyzeString)
 		result, _ := vm.ToValue(validate)
 		return result
 	})
@@ -101,14 +100,20 @@ func RunConclude(concludeScript string, record libs.Record, sign *libs.Signature
 		component := GetComponent(record, componentName)
 		value := Between(component, left, right)
 		sign.Target[valueName] = value
+		utils.DebugF("StringSelect: %v --> %v", valueName, value)
 		return otto.Value{}
 	})
 
-	//  - RegexSelect("component", "var_name", "regex")
-	//  - RegexSelect("component", "var_name", "regex", "position")
+	//  - RegexSelect("component", "regex")
+	//  - RegexSelect("component", "regex")
 	vm.Set("RegexSelect", func(call otto.FunctionCall) otto.Value {
-		valueName, value := RegexSelect(record, call.ArgumentList)
-		sign.Target[valueName] = value
+		result := RegexSelect(record, call.ArgumentList)
+		if len(result) > 0 {
+			for k, value := range result {
+				utils.DebugF("New variales: %v -- %v", k, value)
+				sign.Target[k] = value
+			}
+		}
 		return otto.Value{}
 	})
 
@@ -117,6 +122,7 @@ func RunConclude(concludeScript string, record libs.Record, sign *libs.Signature
 	vm.Set("SetValue", func(call otto.FunctionCall) otto.Value {
 		valueName := call.Argument(0).String()
 		value := call.Argument(1).String()
+		utils.DebugF("SetValue: %v -- %v", valueName, value)
 		sign.Target[valueName] = value
 		return otto.Value{}
 	})
@@ -143,37 +149,30 @@ func Between(value string, left string, right string) string {
 }
 
 // RegexSelect get regex string from component
-func RegexSelect(realRec libs.Record, arguments []otto.Value) (string, string) {
+func RegexSelect(realRec libs.Record, arguments []otto.Value) map[string]string {
+	result := make(map[string]string)
 	//  - RegexSelect("component", "var_name", "regex")
-	//  - RegexSelect("component", "var_name", "regex", "position")
+	utils.DebugF("arguments -- %v", arguments)
+	if len(arguments) < 2 {
+		utils.DebugF("Invalid Conclude")
+		return result
+	}
 	componentName := arguments[0].String()
-	valueName := arguments[1].String()
 	component := GetComponent(realRec, componentName)
+	regexString := arguments[1].String()
 
-	regexString := arguments[2].String()
-	var position int
-	var err error
-	if len(arguments) > 3 {
-		position, err = strconv.Atoi(arguments[3].String())
-		if err != nil {
-			position = 0
+	// map all selected
+	var myExp = regexp.MustCompile(regexString)
+	match := myExp.FindStringSubmatch(component)
+	if len(match) == 0 {
+		utils.DebugF("No match found: %v", regexString)
+	}
+	for i, name := range myExp.SubexpNames() {
+		if i != 0 && name != "" && len(match) > i {
+			result[name] = match[i]
 		}
 	}
-
-	var value string
-	r, rerr := regexp.Compile(regexString)
-	if rerr != nil {
-		return valueName, ""
-	}
-	matches := r.FindStringSubmatch(component)
-	if len(matches) > 0 {
-		if position <= len(matches) {
-			value = matches[position]
-		} else {
-			value = matches[0]
-		}
-	}
-	return valueName, value
+	return result
 }
 
 // Execution Run a command

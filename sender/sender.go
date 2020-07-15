@@ -19,10 +19,18 @@ import (
 
 // JustSend just sending request
 func JustSend(options libs.Options, req libs.Request) (res libs.Response, err error) {
+	if req.Method == "" {
+		req.Method = "GET"
+	}
 	method := req.Method
 	url := req.URL
 	body := req.Body
 	headers := GetHeaders(req)
+
+	timeout := options.Timeout
+	if req.Timeout > 0 {
+		timeout = req.Timeout
+	}
 
 	// update it again
 	var newHeader []map[string]string
@@ -38,15 +46,36 @@ func JustSend(options libs.Options, req libs.Request) (res libs.Response, err er
 	if !options.Debug {
 		logger.Out = ioutil.Discard
 	}
+
 	client := resty.New()
 	client.SetLogger(logger)
-	client.SetCloseConnection(true)
+	client.SetTransport(&http.Transport{
+		MaxIdleConns:          100,
+		MaxConnsPerHost:       1000,
+		IdleConnTimeout:       time.Duration(timeout) * time.Second,
+		ExpectContinueTimeout: time.Duration(timeout) * time.Second,
+		ResponseHeaderTimeout: time.Duration(timeout) * time.Second,
+		TLSHandshakeTimeout:   time.Duration(timeout) * time.Second,
+		DisableCompression:    true,
+		TLSClientConfig:       &tls.Config{InsecureSkipVerify: true},
+	})
 
-	// setting for client
-	client.SetTLSClientConfig(&tls.Config{InsecureSkipVerify: true})
-	client.SetDisableWarn(true)
 	client.SetHeaders(headers)
-
+	client.SetCloseConnection(true)
+	if options.Proxy != "" {
+		client.SetProxy(options.Proxy)
+	}
+	// override proxy
+	if req.Proxy != "" && req.Proxy != "blank" {
+		client.SetProxy(req.Proxy)
+	}
+	if options.Retry > 0 {
+		client.SetRetryCount(options.Retry)
+	}
+	client.SetTimeout(time.Duration(timeout) * time.Second)
+	client.SetRetryWaitTime(time.Duration(timeout/2) * time.Second)
+	client.SetRetryMaxWaitTime(time.Duration(timeout) * time.Second)
+	timeStart := time.Now()
 	// redirect policy
 	if req.Redirect == false {
 		client.SetRedirectPolicy(resty.RedirectPolicyFunc(func(req *http.Request, via []*http.Request) error {
@@ -73,7 +102,7 @@ func JustSend(options libs.Options, req libs.Request) (res libs.Response, err er
 			}
 
 			// response time in second
-			resTime := 0.0
+			resTime := time.Since(timeStart).Seconds()
 			resHeaders = append(resHeaders,
 				map[string]string{"Total Length": strconv.Itoa(resLength)},
 				map[string]string{"Response Time": fmt.Sprintf("%f", resTime)},
@@ -96,7 +125,6 @@ func JustSend(options libs.Options, req libs.Request) (res libs.Response, err er
 				return false
 			},
 		)
-
 	} else {
 		client.SetRedirectPolicy(resty.RedirectPolicyFunc(func(req *http.Request, via []*http.Request) error {
 			// keep the header the same
@@ -105,59 +133,41 @@ func JustSend(options libs.Options, req libs.Request) (res libs.Response, err er
 		}))
 	}
 
-	if options.Retry > 0 {
-		client.SetRetryCount(options.Retry)
-	}
-	client.SetTimeout(time.Duration(options.Timeout) * time.Second)
-	if req.Timeout > 0 {
-		client.SetTimeout(time.Duration(req.Timeout) * time.Second)
-	}
-
-	client.SetRetryWaitTime(time.Duration(options.Timeout/2) * time.Second)
-	client.SetRetryMaxWaitTime(time.Duration(options.Timeout) * time.Second)
-
-	if options.Proxy != "" {
-		client.SetProxy(options.Proxy)
-	}
-	// override proxy
-	if req.Proxy != "" && req.Proxy != "blank" {
-		client.SetProxy(req.Proxy)
-	}
-
 	var resp *resty.Response
 	// really sending things here
+	method = strings.ToLower(strings.TrimSpace(method))
 	switch method {
-	case "GET":
+	case "get":
 		resp, err = client.R().
 			SetBody([]byte(body)).
 			Get(url)
 		break
-	case "POST":
+	case "post":
 		resp, err = client.R().
 			SetBody([]byte(body)).
 			Post(url)
 		break
-	case "HEAD":
+	case "head":
 		resp, err = client.R().
 			SetBody([]byte(body)).
 			Head(url)
 		break
-	case "OPTIONS":
+	case "options":
 		resp, err = client.R().
 			SetBody([]byte(body)).
 			Options(url)
 		break
-	case "PATCH":
+	case "patch":
 		resp, err = client.R().
 			SetBody([]byte(body)).
 			Patch(url)
 		break
-	case "PUT":
+	case "put":
 		resp, err = client.R().
 			SetBody([]byte(body)).
 			Put(url)
 		break
-	case "DELETE":
+	case "delete":
 		resp, err = client.R().
 			SetBody([]byte(body)).
 			Delete(url)

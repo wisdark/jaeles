@@ -26,8 +26,15 @@ func Generators(req libs.Request, sign libs.Signature) []libs.Request {
 		// set original to blank first
 		fuzzReq.Target["original"] = ""
 		fuzzReq.Detections = ResolveDetection(fuzzReq.Detections, fuzzReq.Target)
+		//fuzzReq.Middlewares = ResolveDetection(fuzzReq.Middlewares, fuzzReq.Target)
 		fuzzReq.Generators = funk.UniqString(ResolveDetection(fuzzReq.Generators, fuzzReq.Target))
 
+		// in case we want to send normal request with no generator
+		if len(fuzzReq.Generators) == 0 && fuzzReq.Method != "" {
+			reqs = append(reqs, fuzzReq)
+		}
+
+		// really gen requests
 		for _, genString := range fuzzReq.Generators {
 			// just copy exactly request again
 			if genString == "Null()" {
@@ -46,7 +53,10 @@ func Generators(req libs.Request, sign libs.Signature) []libs.Request {
 			}
 
 			for _, injectedReq := range injectedReqs {
+				injectedReq.Target["InjectedURL"] = injectedReq.URL
+				utils.DebugF("Injected URL: %v", injectedReq.URL)
 				// resolve detection this time because we may need parse something in the variable and original
+				injectedReq.Middlewares = AltResolveDetection(fuzzReq.Middlewares, injectedReq.Target)
 				injectedReq.Detections = AltResolveDetection(fuzzReq.Detections, injectedReq.Target)
 				injectedReq.Conclusions = AltResolveDetection(fuzzReq.Conclusions, injectedReq.Target)
 				reqs = append(reqs, injectedReq)
@@ -61,6 +71,36 @@ func Generators(req libs.Request, sign libs.Signature) []libs.Request {
 func RunGenerator(req libs.Request, genString string) []libs.Request {
 	var reqs []libs.Request
 	vm := otto.New()
+
+	vm.Set("Fuzz", func(call otto.FunctionCall) otto.Value {
+		var injectedReq []libs.Request
+		if len(reqs) > 0 {
+			for _, req := range reqs {
+				injectedReq = Fuzz(req, call.ArgumentList)
+			}
+		} else {
+			injectedReq = Fuzz(req, call.ArgumentList)
+		}
+		if len(injectedReq) > 0 {
+			reqs = append(reqs, injectedReq...)
+		}
+		return otto.Value{}
+	})
+
+	vm.Set("Replace", func(call otto.FunctionCall) otto.Value {
+		var injectedReq []libs.Request
+		if len(reqs) > 0 {
+			for _, req := range reqs {
+				injectedReq = ReplaceMe(req, call.ArgumentList)
+			}
+		} else {
+			injectedReq = ReplaceMe(req, call.ArgumentList)
+		}
+		if len(injectedReq) > 0 {
+			reqs = append(reqs, injectedReq...)
+		}
+		return otto.Value{}
+	})
 
 	vm.Set("Query", func(call otto.FunctionCall) otto.Value {
 		var injectedReq []libs.Request
@@ -202,6 +242,8 @@ func Query(req libs.Request, arguments []otto.Value) []libs.Request {
 	if len(arguments) > 1 {
 		paramName = arguments[1].String()
 	}
+	utils.DebugF("injectedString: %v", injectedString)
+	utils.DebugF("paramName: %v", paramName)
 
 	var reqs []libs.Request
 	rawURL := req.URL
@@ -256,89 +298,91 @@ func Body(req libs.Request, arguments []otto.Value) []libs.Request {
 
 	var reqs []libs.Request
 	target := req.Target
-
 	rawBody := req.Body
+	utils.DebugF("Original Body: %v", rawBody)
+	utils.DebugF("injectedString: %v", injectedString)
+	utils.DebugF("paramName: %v", paramName)
+
 	// @TODO: deal with XML body later
 	// @TODO: deal with multipart form later
-	if paramName == "undefined" {
-		// var newBody []string
-		if rawBody != "" {
-			// @TODO: inject for all child node, only 3 depth for now
-			if utils.IsJSON(rawBody) {
-				jsonParsed, _ := gabs.ParseJSON([]byte(rawBody))
-				for key, child := range jsonParsed.ChildrenMap() {
-					injectedReq := req
-					if len(child.Children()) == 0 {
-						str := fmt.Sprint(child)
-						target["original"] = str
-						newValue := Encoder(req.Encoding, AltResolveVariable(injectedString, target))
-						jsonBody, _ := gabs.ParseJSON([]byte(rawBody))
-						jsonBody.Set(newValue, key)
-						injectedReq.Body = jsonBody.String()
-						injectedReq.Target = target
-						reqs = append(reqs, injectedReq)
+	if paramName != "undefined" {
+		utils.DebugF("@TODO: Didn't support custom param yet")
+		return reqs
+	}
+	// paramName == "undefined"
+	if rawBody != "" {
+		// @TODO: inject for all child node, only 3 depth for now
+		if utils.IsJSON(rawBody) {
+			jsonParsed, _ := gabs.ParseJSON([]byte(rawBody))
+			for key, child := range jsonParsed.ChildrenMap() {
+				injectedReq := req
+				if len(child.Children()) == 0 {
+					str := fmt.Sprint(child)
+					target["original"] = str
+					newValue := Encoder(req.Encoding, AltResolveVariable(injectedString, target))
+					jsonBody, _ := gabs.ParseJSON([]byte(rawBody))
+					jsonBody.Set(newValue, key)
+					injectedReq.Body = jsonBody.String()
+					injectedReq.Target = target
+					reqs = append(reqs, injectedReq)
 
-					} else {
-						// depth 2
-						for _, ch := range child.Children() {
-							if len(ch.Children()) == 0 {
-								str := fmt.Sprint(child)
-								target["original"] = str
-								newValue := Encoder(req.Encoding, AltResolveVariable(injectedString, target))
-								jsonBody, _ := gabs.ParseJSON([]byte(rawBody))
-								jsonBody.Set(newValue, key)
-								injectedReq.Body = jsonBody.String()
-								injectedReq.Target = target
-								reqs = append(reqs, injectedReq)
-							} else {
-								// depth 3
-								for _, ch := range child.Children() {
-									if len(ch.Children()) == 0 {
-										str := fmt.Sprint(child)
-										target["original"] = str
-										newValue := Encoder(req.Encoding, AltResolveVariable(injectedString, target))
-										jsonBody, _ := gabs.ParseJSON([]byte(rawBody))
-										jsonBody.Set(newValue, key)
-										injectedReq.Body = jsonBody.String()
-										injectedReq.Target = target
-										reqs = append(reqs, injectedReq)
-									}
+				} else {
+					// depth 2
+					for _, ch := range child.Children() {
+						if len(ch.Children()) == 0 {
+							str := fmt.Sprint(child)
+							target["original"] = str
+							newValue := Encoder(req.Encoding, AltResolveVariable(injectedString, target))
+							jsonBody, _ := gabs.ParseJSON([]byte(rawBody))
+							jsonBody.Set(newValue, key)
+							injectedReq.Body = jsonBody.String()
+							injectedReq.Target = target
+							reqs = append(reqs, injectedReq)
+						} else {
+							// depth 3
+							for _, ch := range child.Children() {
+								if len(ch.Children()) == 0 {
+									str := fmt.Sprint(child)
+									target["original"] = str
+									newValue := Encoder(req.Encoding, AltResolveVariable(injectedString, target))
+									jsonBody, _ := gabs.ParseJSON([]byte(rawBody))
+									jsonBody.Set(newValue, key)
+									injectedReq.Body = jsonBody.String()
+									injectedReq.Target = target
+									reqs = append(reqs, injectedReq)
 								}
 							}
 						}
 					}
-					// dd, ok := nn[1].Data().(int)
 				}
-
-			} else {
-				// normal form body
-				params := strings.SplitN(rawBody, "&", -1)
-				for index, param := range params {
-					newParams := strings.SplitN(rawBody, "&", -1)
-					injectedReq := req
-					k := strings.SplitN(param, "=", -1)
-					if len(k) > 1 {
-						target["original"] = k[1]
-						newValue := Encoder(req.Encoding, AltResolveVariable(injectedString, target))
-						newParams[index] = fmt.Sprintf("%v=%v", k[0], newValue)
-						injectedReq.Body = strings.Join(newParams[:], "&")
-						injectedReq.Target = target
-						reqs = append(reqs, injectedReq)
-					} else if len(k) == 1 {
-						target["original"] = k[0]
-						newValue := Encoder(req.Encoding, AltResolveVariable(injectedString, target))
-						newParams[index] = fmt.Sprintf("%v=%v", k[0], newValue)
-						injectedReq.Body = strings.Join(newParams[:], "&")
-						injectedReq.Target = target
-						reqs = append(reqs, injectedReq)
-					}
-				}
-
+				// dd, ok := nn[1].Data().(int)
 			}
 
+		} else {
+			// normal form body
+			params := strings.SplitN(rawBody, "&", -1)
+			for index, param := range params {
+				newParams := strings.SplitN(rawBody, "&", -1)
+				injectedReq := req
+				k := strings.SplitN(param, "=", -1)
+				if len(k) > 1 {
+					target["original"] = k[1]
+					newValue := Encoder(req.Encoding, AltResolveVariable(injectedString, target))
+					newParams[index] = fmt.Sprintf("%v=%v", k[0], newValue)
+					injectedReq.Body = strings.Join(newParams[:], "&")
+					injectedReq.Target = target
+					reqs = append(reqs, injectedReq)
+				} else if len(k) == 1 {
+					target["original"] = k[0]
+					newValue := Encoder(req.Encoding, AltResolveVariable(injectedString, target))
+					newParams[index] = fmt.Sprintf("%v=%v", k[0], newValue)
+					injectedReq.Body = strings.Join(newParams[:], "&")
+					injectedReq.Target = target
+					reqs = append(reqs, injectedReq)
+				}
+			}
 		}
 	}
-	// return rawURL
 	return reqs
 }
 
@@ -385,7 +429,6 @@ func Path(req libs.Request, arguments []otto.Value) []libs.Request {
 			} else {
 				injectedReq.URL = target["BaseURL"] + strings.Join(newPaths[:], "/") + "?" + rawQuery
 			}
-
 			// newPaths[len(newPaths)-1] = newValue + "&" + rawQuery
 		} else {
 			injectedReq.URL = target["BaseURL"] + strings.Join(newPaths[:], "/")
@@ -404,7 +447,6 @@ func Path(req libs.Request, arguments []otto.Value) []libs.Request {
 		}
 
 		if err == nil {
-
 			injectedReq := req
 			target["original"] = Paths[position]
 			newValue := Encoder(req.Encoding, AltResolveVariable(injectedString, target))
@@ -596,53 +638,141 @@ func Cookie(req libs.Request, arguments []otto.Value) []libs.Request {
 func Header(req libs.Request, arguments []otto.Value) []libs.Request {
 	var reqs []libs.Request
 	injectedString := arguments[0].String()
-	headerName := arguments[1].String()
+	var headerNames []string
 
-	target := req.Target
-
-	injectedReq := req
-	var isExistHeader bool
-	// check if inject header is  new or not
-	for _, header := range req.Headers {
-		isExistHeader = funk.Contains(header, headerName)
-		if isExistHeader == true {
-			break
-		} else {
-			isExistHeader = false
-		}
-	}
-	if isExistHeader == false {
-		newHeaders := req.Headers
-		target["original"] = ""
-		newValue := Encoder(req.Encoding, AltResolveVariable(injectedString, target))
-		head := map[string]string{
-			headerName: newValue,
-		}
-		newHeaders = append(newHeaders, head)
-		injectedReq.Headers = newHeaders
-		injectedReq.Target = target
-		reqs = append(reqs, injectedReq)
+	if len(arguments) > 1 {
+		headerNames = append(headerNames, arguments[1].String())
 	} else {
-		var newHeaders []map[string]string
-		// replace old header
 		for _, header := range req.Headers {
-			for k, v := range header {
-				if k == headerName {
-					target["original"] = v
-					newValue := Encoder(req.Encoding, AltResolveVariable(injectedString, target))
-					newHead := map[string]string{
-						headerName: newValue,
-					}
-					newHeaders = append(newHeaders, newHead)
-				} else {
-					newHeaders = append(newHeaders, header)
-				}
+			for key := range header {
+				headerNames = append(headerNames, key)
 			}
 		}
-		injectedReq.Target = target
-		injectedReq.Headers = newHeaders
-		reqs = append(reqs, injectedReq)
+	}
+	if len(headerNames) == 0 {
+		headerNames = append(headerNames, "User-Agent")
 	}
 
+	for _, headerName := range headerNames {
+
+		target := req.Target
+		injectedReq := req
+		var isExistHeader bool
+		// check if inject header is  new or not
+		for _, header := range req.Headers {
+			isExistHeader = funk.Contains(header, headerName)
+			if isExistHeader == true {
+				break
+			} else {
+				isExistHeader = false
+			}
+		}
+		if isExistHeader == false {
+			newHeaders := req.Headers
+			target["original"] = ""
+			newValue := Encoder(req.Encoding, AltResolveVariable(injectedString, target))
+			head := map[string]string{
+				headerName: newValue,
+			}
+			newHeaders = append(newHeaders, head)
+			injectedReq.Headers = newHeaders
+			injectedReq.Target = target
+			reqs = append(reqs, injectedReq)
+		} else {
+			var newHeaders []map[string]string
+			// replace old header
+			for _, header := range req.Headers {
+				for k, v := range header {
+					if k == headerName {
+						target["original"] = v
+						newValue := Encoder(req.Encoding, AltResolveVariable(injectedString, target))
+						newHead := map[string]string{
+							headerName: newValue,
+						}
+						newHeaders = append(newHeaders, newHead)
+					} else {
+						newHeaders = append(newHeaders, header)
+					}
+				}
+			}
+			injectedReq.Target = target
+			injectedReq.Headers = newHeaders
+			reqs = append(reqs, injectedReq)
+		}
+	}
+
+	return reqs
+}
+
+// // Usage: Fuzz('{{.payload}}'), Fuzz('{{.payload}}11', 'ANOTHER_FUZZ')
+// Fuzz gen request with fuzz keyword
+func Fuzz(req libs.Request, arguments []otto.Value) []libs.Request {
+	injectedString := arguments[0].String()
+	utils.DebugF("injectedString: %v", injectedString)
+	replaceWord := "FUZZ"
+	if len(arguments) > 1 {
+		replaceWord = arguments[1].String()
+	}
+
+	var reqs []libs.Request
+	injectedReq := req
+	target := req.Target
+	target[replaceWord] = injectedString
+
+	// replace URL and Body part
+	injectedReq.URL = AltResolveVariable(req.URL, target)
+	if req.Body != "" {
+		injectedReq.Body = AltResolveVariable(req.Body, target)
+	}
+
+	if len(req.Headers) == 0 {
+		reqs = append(reqs, injectedReq)
+		return reqs
+	}
+	// replace headers part
+	injectedReq.Headers = AltResolveHeader(req.Headers, target)
+	reqs = append(reqs, injectedReq)
+	return reqs
+}
+
+// Usage: Replace(), Replace('FUZZ')
+// ReplaceMe gen request with fuzz keyword
+func ReplaceMe(req libs.Request, arguments []otto.Value) []libs.Request {
+	injectedString := req.Target["payload"]
+	replaceWord := "FUZZ"
+	if len(arguments) == 0 {
+		replaceWord = arguments[0].String()
+	}
+	utils.DebugF("injectedString: %v", injectedString)
+	utils.DebugF("replaceWord: %v", replaceWord)
+
+	var reqs []libs.Request
+	injectedReq := req
+
+	// replace URL and Body part
+	injectedReq.URL = strings.Replace(req.URL, replaceWord, injectedString, -1)
+	if req.Body != "" {
+		utils.DebugF("Raw body: %v", req.Body)
+		injectedReq.Body = strings.Replace(req.Body, replaceWord, injectedString, -1)
+		utils.DebugF("Injected body: %v", injectedReq.Body)
+	}
+	if len(req.Headers) == 0 {
+		reqs = append(reqs, injectedReq)
+		return reqs
+	}
+	// replace headers part
+	var realHeaders []map[string]string
+	for _, head := range req.Headers {
+		realHeader := make(map[string]string)
+		for key, value := range head {
+			realKey := strings.Replace(key, replaceWord, injectedString, -1)
+			realVal := strings.Replace(value, replaceWord, injectedString, -1)
+			realHeader[realKey] = realVal
+		}
+		realHeaders = append(realHeaders, realHeader)
+	}
+	injectedReq.Headers = realHeaders
+
+	reqs = append(reqs, injectedReq)
 	return reqs
 }

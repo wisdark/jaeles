@@ -3,6 +3,7 @@ package core
 import (
 	"bytes"
 	"github.com/thoas/go-funk"
+	"path"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -37,11 +38,19 @@ func SingleSign(signName string) []string {
 	signName = utils.NormalizePath(signName)
 
 	var Signs []string
-	if strings.HasSuffix(signName, ".yaml") {
+	// in case selector is file
+	if strings.HasSuffix(signName, ".yaml") && !strings.Contains(signName, "*") {
 		if utils.FileExists(signName) {
 			Signs = append(Signs, signName)
 		}
+		return Signs
 	}
+
+	// in case selector is a folder
+	if utils.FolderExists(signName) {
+		signName = path.Join(path.Clean(signName), ".*")
+	}
+
 	// get more signature
 	if strings.Contains(signName, "*") && strings.Contains(signName, "/") {
 		asbPath, _ := filepath.Abs(signName)
@@ -70,12 +79,15 @@ func SingleSign(signName string) []string {
 // AltResolveRequest resolve all request but look for [[ ]] delimiter
 func AltResolveRequest(req *libs.Request) {
 	target := req.Target
-
 	if len(req.Values) > 0 {
 		for _, value := range req.Values {
 			for k, v := range value {
+				if strings.Contains(v, "{{.") && strings.Contains(v, "}}") {
+					v = ResolveVariable(v, target)
+				}
 				// variable as a script
 				if strings.Contains(v, "(") && strings.Contains(v, ")") {
+
 					newValue := RunVariables(v)
 					if len(newValue) > 0 {
 						target[k] = newValue[0]
@@ -133,7 +145,6 @@ func ResolveHeader(headers []map[string]string, target map[string]string) []map[
 
 // AltResolveHeader resolve headers part in YAML signature file
 func AltResolveHeader(headers []map[string]string, target map[string]string) []map[string]string {
-	// realHeaders := headers
 	var realHeaders []map[string]string
 
 	for _, head := range headers {
@@ -154,7 +165,6 @@ func ResolveVariable(format string, data map[string]string) string {
 	if strings.TrimSpace(format) == "" {
 		return format
 	}
-
 	_, exist := data["original"]
 	if !exist {
 		data["original"] = ""
@@ -197,7 +207,6 @@ func AltResolveVariable(format string, data map[string]string) string {
 		return format
 	}
 	realFormat, err := template.New("").Delims("[[", "]]").Parse(format)
-
 	_, exist := data["original"]
 	if !exist {
 		data["original"] = ""

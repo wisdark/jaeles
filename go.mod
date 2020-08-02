@@ -4,10 +4,12 @@ go 1.13
 
 require (
 	github.com/Jeffail/gabs/v2 v2.5.1
+	github.com/Masterminds/sprig/v3 v3.1.0
 	github.com/Shopify/yaml v2.1.0+incompatible
 	github.com/appleboy/gin-jwt/v2 v2.6.3
-	github.com/chromedp/cdproto v0.0.0-20200706151146-b7f349b11751
+	github.com/chromedp/cdproto v0.0.0-20200709115526-d1f6fc58448b
 	github.com/chromedp/chromedp v0.5.3
+	github.com/davecgh/go-spew v1.1.1
 	github.com/fatih/color v1.9.0
 	github.com/gin-contrib/cors v1.3.1
 	github.com/gin-contrib/static v0.0.0-20191128031702-f81c604d8ac2
@@ -15,7 +17,8 @@ require (
 	github.com/go-resty/resty/v2 v2.3.0
 	github.com/google/uuid v1.1.1
 	github.com/gorilla/websocket v1.4.2
-	github.com/jinzhu/gorm v1.9.14
+	github.com/jinzhu/gorm v1.9.15
+	github.com/json-iterator/go v1.1.10
 	github.com/mgutz/ansi v0.0.0-20200706080929-d51e80ef957d // indirect
 	github.com/mitchellh/go-homedir v1.1.0
 	github.com/panjf2000/ants v1.3.0

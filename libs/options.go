@@ -32,10 +32,12 @@ type Options struct {
 	Concurrency       int
 	Threads           int
 	Delay             int
-	SaveRaw           bool
 	Timeout           int
 	Refresh           int
 	Retry             int
+	SaveRaw           bool
+	JsonOutput        bool
+	VerboseSummary    bool
 	Quiet             bool
 	FullHelp          bool
 	Verbose           bool
@@ -55,10 +57,12 @@ type Options struct {
 
 // Report options for api server
 type Report struct {
-	ReportName   string
-	TemplateFile string
-	OutputPath   string
-	Title        string
+	VerboseReport bool
+	ReportName    string
+	TemplateFile  string
+	VTemplateFile string
+	OutputPath    string
+	Title         string
 }
 
 // Server options for api server

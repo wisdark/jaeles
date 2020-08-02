@@ -49,10 +49,12 @@ func init() {
 	RootCmd.PersistentFlags().IntVar(&options.Delay, "delay", 0, "Delay time between requests")
 	// output options
 	RootCmd.PersistentFlags().StringVarP(&options.Output, "output", "o", "out", "Output folder name")
+	RootCmd.PersistentFlags().BoolVar(&options.JsonOutput, "json", false, "Store output as JSON")
 	RootCmd.PersistentFlags().StringVar(&options.PassiveOutput, "passiveOutput", "", "Passive output folder (default is passive-out)")
 	RootCmd.PersistentFlags().StringVar(&options.PassiveSummary, "passiveSummary", "", "Passive Summary file")
 	RootCmd.PersistentFlags().StringVarP(&options.SummaryOutput, "summaryOutput", "O", "", "Summary output file")
 	RootCmd.PersistentFlags().StringVar(&options.SummaryVuln, "summaryVuln", "", "Summary output file")
+	RootCmd.PersistentFlags().BoolVar(&options.VerboseSummary, "sverbose", false, "Store verbose info in summary file")
 	// report options
 	RootCmd.PersistentFlags().StringVarP(&options.Report.ReportName, "report", "R", "", "Report name")
 	RootCmd.PersistentFlags().StringVar(&options.Report.Title, "title", "", "Report title name")
@@ -72,7 +74,7 @@ func init() {
 	RootCmd.PersistentFlags().StringVarP(&options.FoundCmd, "found", "f", "", "Run host OS command when vulnerable found")
 	RootCmd.PersistentFlags().BoolVarP(&options.EnableFormatInput, "format-input", "J", false, "Enable special input format")
 	RootCmd.PersistentFlags().BoolVar(&options.SaveRaw, "save-raw", false, "save raw request")
-	RootCmd.PersistentFlags().BoolVar(&options.NoOutput, "no-output", false, "Do not store raw output")
+	RootCmd.PersistentFlags().BoolVarP(&options.NoOutput, "no-output", "N", false, "Do not store output")
 	RootCmd.PersistentFlags().BoolVar(&options.NoBackGround, "no-background", false, "Do not run background task")
 	RootCmd.PersistentFlags().BoolVar(&options.NoDB, "no-db", false, "Disable Database")
 	RootCmd.PersistentFlags().BoolVar(&options.DisableParallel, "single", false, "Disable parallel mode (use this when you need logic in single signature")

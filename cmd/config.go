@@ -82,9 +82,7 @@ func runConfig(cmd *cobra.Command, _ []string) error {
 		database.CleanRecords()
 		break
 	case "clean":
-		os.RemoveAll(path.Join(options.RootFolder, "sqlite.db"))
-		os.RemoveAll(path.Join(options.RootFolder, "config.yaml"))
-		os.RemoveAll(path.Join(options.RootFolder, "burp.json"))
+		os.RemoveAll(options.RootFolder)
 		break
 	case "cred":
 		username, _ := cmd.Flags().GetString("user")
@@ -100,11 +98,11 @@ func runConfig(cmd *cobra.Command, _ []string) error {
 			database.ImportCollab(secret, collab)
 		}
 		break
-
 	case "init":
 		reloadSignature(options.SignFolder, mics)
 		break
 	case "reload":
+		os.RemoveAll(path.Join(options.RootFolder, "base-signatures"))
 		reloadSignature(options.SignFolder, mics)
 		break
 	case "add":
@@ -236,6 +234,9 @@ Mics Flags:
       --passiveSummary string   Passive Summary file
       --sp string               Selector for passive detections (default "*")
       --single string           Forced running in single mode
+      --sverbose bool           Store verbose info in summary file
+  -N  --no-output bool          Disable store output
+      --json bool               Store output as JSON format
   -q, --quiet                   Enable Quiet Output
   -Q, --quietFormat string      Format for quiet output (default "{{.VulnURL}}")
   -R, --report string           HTML report file name
@@ -246,13 +247,17 @@ Mics Flags:
       --ba                      Shortcut for -p 'BaseURL=[[.Raw]]' or -p 'root=[[.Raw]]'
 `
 	h += "\n\nExamples Commands:\n"
-	h += "  jaeles scan -s 'jira' -s 'ruby' -u target.com\n"
-	h += "  jaeles scan -c 50 -s 'java' -x 'tomcat' -U list_of_urls.txt\n"
-	h += "  jaeles scan -G -c 50 -s '/tmp/custom-signature/.*' -U list_of_urls.txt\n"
-	h += "  jaeles scan -c 50 -S list_of_selectors.txt -U list_of_urls.txt -H 'Referer: {{.BaseURL}}/x' \n"
+	h += "  jaeles scan -s <signature> -u <url>\n"
+	h += "  jaeles scan -c 50 -s <signature> -U <list_urls> -L <level-of-signatures>\n"
+	h += "  jaeles scan -c 50 -s <signature> -U <list_urls>\n"
+	h += "  jaeles scan -c 50 -s <signature> -U <list_urls> -p 'dest=xxx.burpcollaborator.net'\n"
+	h += "  jaeles scan -c 50 -s <signature> -U <list_urls> -f 'noti_slack \"{{.vulnInfo}}\"'\n"
+	h += "  jaeles scan -v -c 50 -s <signature> -U list_target.txt -o /tmp/output\n"
 	h += "  jaeles scan -s <signature> -s <another-selector> -u http://example.com\n"
 	h += "  echo '{\"BaseURL\":\"https://example.com/sub/\"}' | jaeles scan -s sign.yaml -J \n"
-	h += "  cat list_target.txt | jaeles scan -c 50 -s <signature>\n"
+	h += "  jaeles scan -G -s <signature> -s <another-selector> -x <exclude-selector> -u http://example.com\n"
+	h += "  cat list_target.txt | jaeles scan -c 100 -s <signature>\n"
+
 	h += "\nOthers Commands:\n"
 	h += "  jaeles server -s '/tmp/custom-signature/sensitive/.*' -L 2\n"
 	h += "  jaeles server --host 0.0.0.0 --port 5000 -s '/tmp/custom-signature/sensitive/.*' -L 2\n"
@@ -261,6 +266,7 @@ Mics Flags:
 	h += "  jaeles config -a update --repo https://github.com/jaeles-project/jaeles-signatures\n"
 	h += "  jaeles report -o /tmp/scanned/out\n"
 	h += "  jaeles report -o /tmp/scanned/out --title 'Passive Report'\n"
+	h += "  jaeles report -o /tmp/scanned/out --title 'Verbose Report' --sverbose\n"
 	h += "\nOfficial Documentation can be found here: https://jaeles-project.github.io/\n"
 	fmt.Println(h)
 }

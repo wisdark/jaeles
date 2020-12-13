@@ -19,6 +19,7 @@ type Options struct {
 	LogFile          string
 	Proxy            string
 	Selectors        string
+	InlineDetection  string
 	Params           []string
 	Headers          []string
 	Signs            []string
@@ -49,10 +50,34 @@ type Options struct {
 	EnableFormatInput bool
 	EnablePassive     bool
 	DisableParallel   bool
-	BaseRoot          bool
-	BurpProxy         bool
-	Server            Server
-	Report            Report
+
+	// Chunk Options
+	ChunkDir     string
+	ChunkRun     bool
+	ChunkThreads int
+	ChunkSize    int
+	ChunkLimit   int
+
+	Mics   Mics
+	Scan   Scan
+	Server Server
+	Report Report
+	Config Config
+}
+
+// Scan options for api server
+type Scan struct {
+	RawRequest      string
+	EnableGenReport bool
+}
+
+// Mics some shortcut options
+type Mics struct {
+	FullHelp         bool
+	AlwaysTrue       bool
+	BaseRoot         bool
+	BurpProxy        bool
+	DisableReplicate bool
 }
 
 // Report options for api server
@@ -79,6 +104,16 @@ type Server struct {
 	Key          string
 }
 
+// Config options for api server
+type Config struct {
+	Forced     bool
+	SkipMics   bool
+	Username   string
+	Password   string
+	Repo       string
+	PrivateKey string
+}
+
 // Job define job for running routine
 type Job struct {
 	URL  string
@@ -90,4 +125,18 @@ type PJob struct {
 	Req  Request
 	ORec Record
 	Sign Signature
+}
+
+// VulnData vulnerable Data
+type VulnData struct {
+	ScanID          string
+	SignID          string
+	SignName        string
+	URL             string
+	Risk            string
+	DetectionString string
+	DetectResult    string
+	Confidence      string
+	Req             string
+	Res             string
 }

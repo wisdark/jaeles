@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"log"
 	"os"
 	"path"
 	"path/filepath"
@@ -327,4 +328,83 @@ func StripName(raw string) string {
 // MoveFolder move folder
 func MoveFolder(src string, dest string) {
 	os.Rename(NormalizePath(src), NormalizePath(dest))
+}
+
+// GetFileSize get file size of a file in GB
+func GetFileSize(src string) float64 {
+	var sizeGB float64
+	fi, err := os.Stat(NormalizePath(src))
+	if err != nil {
+		return sizeGB
+	}
+	// get the size
+	size := fi.Size()
+	sizeGB = float64(size) / (1024 * 1024 * 1024)
+	return sizeGB
+}
+
+// ChunkFileByPart chunk file to multiple part
+func ChunkFileByPart(source string, chunk int) [][]string {
+	var divided [][]string
+	data := ReadingLines(source)
+	if len(data) <= 0 || chunk > len(data) {
+		if len(data) > 0 {
+			divided = append(divided, data)
+		}
+		return divided
+	}
+
+	chunkSize := (len(data) + chunk - 1) / chunk
+	for i := 0; i < len(data); i += chunkSize {
+		end := i + chunkSize
+		if end > len(data) {
+			end = len(data)
+		}
+
+		divided = append(divided, data[i:end])
+	}
+	return divided
+}
+
+// ChunkFileBySize chunk file to multiple part
+func ChunkFileBySize(source string, chunk int) [][]string {
+	var divided [][]string
+	data := ReadingLines(source)
+	if len(data) <= 0 || chunk > len(data) {
+		if len(data) > 0 {
+			divided = append(divided, data)
+		}
+		return divided
+	}
+
+	chunkSize := chunk
+	for i := 0; i < len(data); i += chunkSize {
+		end := i + chunkSize
+		if end > len(data) {
+			end = len(data)
+		}
+
+		divided = append(divided, data[i:end])
+	}
+	return divided
+}
+
+func PromptConfirm(s string) bool {
+	reader := bufio.NewReader(os.Stdin)
+	for {
+		fmt.Printf("%s [y/n]: ", s)
+
+		response, err := reader.ReadString('\n')
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		response = strings.ToLower(strings.TrimSpace(response))
+
+		if response == "y" || response == "yes" {
+			return true
+		} else if response == "n" || response == "no" {
+			return false
+		}
+	}
 }

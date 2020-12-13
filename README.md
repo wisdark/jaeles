@@ -12,7 +12,19 @@
 
 ![Architecture](https://github.com/jaeles-project/jaeles-plugins/blob/master/imgs/jaeles-architecture.png?raw=true)
 
+
+
+## Painless integrate Jaeles into your recon workflow?
+
+<p align="center">
+  <img alt="huntersuite" src="https://user-images.githubusercontent.com/23289085/101143253-35ea6b80-3649-11eb-9130-d1fc306c9a76.png" height="200" />
+  <p align="center">
+Enjoying this tool? Support it's development and take your game to the next level by using <a href="https://huntersuite.io">HunterSuite.io</a>
+  </p>
+</p>
+
 ## Installation
+
 Download [precompiled version here](https://github.com/jaeles-project/jaeles/releases).
 
 If you have a Go environment, make sure you have **Go >= 1.13** with Go Modules enable and run the following command.
@@ -50,6 +62,13 @@ Please visit the [Official Documention](https://jaeles-project.github.io/) for m
 ```
 
 More usage can be found [here](https://jaeles-project.github.io/usage/)
+
+## Run with Docker
+
+```shell
+docker pull j3ssie/jaeles
+docker run j3ssie/jaeles scan -s '<selector>' -u http://example.com
+```
 
 ## Showcases
 

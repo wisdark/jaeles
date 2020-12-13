@@ -23,7 +23,7 @@ func InitConfig(options *libs.Options) {
 		os.MkdirAll(options.RootFolder, 0750)
 		// cloning default repo
 		UpdatePlugins(*options)
-		UpdateSignature(*options, "")
+		UpdateSignature(*options)
 	}
 
 	configPath := path.Join(options.RootFolder, "config.yaml")
@@ -86,7 +86,7 @@ func InitConfig(options *libs.Options) {
 	var err error
 	err = os.MkdirAll(options.Output, 0750)
 	if err != nil && options.NoOutput == false {
-		fmt.Fprintf(os.Stderr, "failed to create output directory: %s\n", err)
+		fmt.Fprintf(os.Stderr, "Failed to create output directory: %s -- %s\n", err, options.Output)
 		os.Exit(1)
 	}
 	if options.SummaryOutput == "" {
@@ -103,5 +103,19 @@ func InitConfig(options *libs.Options) {
 	if options.PassiveSummary == "" {
 		options.PassiveSummary = path.Join(options.PassiveOutput, "jaeles-passive-summary.txt")
 	}
+
+	dbSize := utils.GetFileSize(options.Server.DBPath)
+	if dbSize > 5.0 {
+		utils.WarningF("Your Database size look very big: %vGB", fmt.Sprintf("%.2f", dbSize))
+		utils.WarningF("Consider clean your db with this command: 'jaeles config -a clear' or just remove your '~/.jaeles/'")
+	}
 	utils.InforF("Summary output: %v", options.SummaryOutput)
+
+	if options.ChunkRun {
+		if options.ChunkDir == "" {
+			options.ChunkDir = path.Join(os.TempDir(), "jaeles-chunk-data")
+		}
+		os.MkdirAll(options.ChunkDir, 0755)
+	}
+
 }

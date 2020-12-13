@@ -1,29 +1,50 @@
 package core
 
 import (
+	"encoding/hex"
 	"fmt"
+	"github.com/jaeles-project/jaeles/sender"
 	"github.com/jaeles-project/jaeles/utils"
-	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
 
-	"github.com/Jeffail/gabs/v2"
-	"github.com/jaeles-project/jaeles/database"
-	"github.com/jaeles-project/jaeles/libs"
-	"github.com/parnurzeal/gorequest"
-
 	"github.com/robertkrimen/otto"
 )
 
-// RunDetector is main function for detections
-func RunDetector(record libs.Record, detectionString string) (string, bool) {
+func (r *Record) Detector() {
+	if r.Opt.InlineDetection != "" {
+		r.Request.Detections = append(r.Request.Detections, r.Opt.InlineDetection)
+	}
+	r.RequestScripts("detections", r.Request.Detections)
+}
+
+// Detector is main function for detections
+func (r *Record) RequestScripts(scriptType string, scripts []string) bool {
+	/* Analyze part */
+	if r.Request.Beautify == "" {
+		r.Request.Beautify = sender.BeautifyRequest(r.Request)
+	}
+	if len(r.Request.Detections) <= 0 {
+		return false
+	}
+
+	record := *r
 	var extra string
 	vm := otto.New()
 
 	// ExecCmd execute command command
 	vm.Set("ExecCmd", func(call otto.FunctionCall) otto.Value {
 		result, _ := vm.ToValue(Execution(call.Argument(0).String()))
+		return result
+	})
+
+	// Component get component content
+	vm.Set("Component", func(call otto.FunctionCall) otto.Value {
+		componentName := call.Argument(0).String()
+		content := GetComponent(record, componentName)
+		fmt.Println(content)
+		result, _ := vm.ToValue(true)
 		return result
 	})
 
@@ -79,6 +100,12 @@ func RunDetector(record libs.Record, detectionString string) (string, bool) {
 		return result
 	})
 
+	// return if record is vulnerable or not
+	vm.Set("IsVulnerable", func(call otto.FunctionCall) otto.Value {
+		result, _ := vm.ToValue(r.IsVulnerable)
+		return result
+	})
+
 	// shortcut for grepping commong error
 	vm.Set("CommonError", func(call otto.FunctionCall) otto.Value {
 		args := call.ArgumentList
@@ -111,6 +138,20 @@ func RunDetector(record libs.Record, detectionString string) (string, bool) {
 	})
 
 	vm.Set("StringSearch", func(call otto.FunctionCall) otto.Value {
+		args := call.ArgumentList
+		componentName := "response"
+		analyzeString := args[0].String()
+		if len(args) >= 2 {
+			componentName = args[0].String()
+			analyzeString = args[1].String()
+		}
+		component := GetComponent(record, componentName)
+		validate := StringSearch(component, analyzeString)
+		result, _ := vm.ToValue(validate)
+		return result
+	})
+
+	vm.Set("search", func(call otto.FunctionCall) otto.Value {
 		args := call.ArgumentList
 		componentName := "response"
 		analyzeString := args[0].String()
@@ -168,8 +209,18 @@ func RunDetector(record libs.Record, detectionString string) (string, bool) {
 		result, _ := vm.ToValue(statusCode)
 		return result
 	})
+	vm.Set("code", func(call otto.FunctionCall) otto.Value {
+		statusCode := record.Response.StatusCode
+		result, _ := vm.ToValue(statusCode)
+		return result
+	})
 
 	vm.Set("ResponseTime", func(call otto.FunctionCall) otto.Value {
+		responseTime := record.Response.ResponseTime
+		result, _ := vm.ToValue(responseTime)
+		return result
+	})
+	vm.Set("time", func(call otto.FunctionCall) otto.Value {
 		responseTime := record.Response.ResponseTime
 		result, _ := vm.ToValue(responseTime)
 		return result
@@ -198,6 +249,11 @@ func RunDetector(record libs.Record, detectionString string) (string, bool) {
 		result, _ := vm.ToValue(statusCode)
 		return result
 	})
+	vm.Set("oCode", func(call otto.FunctionCall) otto.Value {
+		statusCode := record.OriginRes.StatusCode
+		result, _ := vm.ToValue(statusCode)
+		return result
+	})
 	vm.Set("OriginResponseTime", func(call otto.FunctionCall) otto.Value {
 		responseTime := record.OriginRes.ResponseTime
 		result, _ := vm.ToValue(responseTime)
@@ -210,7 +266,7 @@ func RunDetector(record libs.Record, detectionString string) (string, bool) {
 			result, _ := vm.ToValue(ContentLength)
 			return result
 		}
-		selectedRec := libs.Record{Request: record.OriginReq, Response: record.OriginRes}
+		selectedRec := Record{Request: record.OriginReq, Response: record.OriginRes}
 		componentName := args[0].String()
 		componentLength := len(GetComponent(selectedRec, componentName))
 		result, _ := vm.ToValue(componentLength)
@@ -303,13 +359,14 @@ func RunDetector(record libs.Record, detectionString string) (string, bool) {
 		return result
 	})
 
-	vm.Set("Collab", func(call otto.FunctionCall) otto.Value {
-		analyzeString := call.Argument(0).String()
-		res, validate := PollCollab(record, analyzeString)
-		extra = res
-		result, _ := vm.ToValue(validate)
-		return result
-	})
+	//
+	//vm.Set("Collab", func(call otto.FunctionCall) otto.Value {
+	//	analyzeString := call.Argument(0).String()
+	//	res, validate := PollCollab(record, analyzeString)
+	//	extra = res
+	//	result, _ := vm.ToValue(validate)
+	//	return result
+	//})
 
 	// StringGrep select a string from component
 	// StringGrep("component", "right", "left")
@@ -369,23 +426,89 @@ func RunDetector(record libs.Record, detectionString string) (string, bool) {
 		return result
 	})
 
-	result, _ := vm.Run(detectionString)
-	analyzeResult, err := result.Export()
-	if err != nil || analyzeResult == nil {
-		return "", false
+	/* Really start do detection here */
+	switch scriptType {
+	case "detect", "detections":
+		for _, analyze := range scripts {
+			// pass detection here
+			result, _ := vm.Run(analyze)
+			analyzeResult, err := result.Export()
+			// in case vm panic
+			if err != nil || analyzeResult == nil {
+				r.DetectString = analyze
+				r.IsVulnerable = false
+				r.DetectResult = ""
+				r.ExtraOutput = ""
+				continue
+			}
+			r.DetectString = analyze
+			r.IsVulnerable = analyzeResult.(bool)
+			r.DetectResult = extra
+			r.ExtraOutput = extra
+
+			utils.DebugF("[Detection] %v -- %v", analyze, r.IsVulnerable)
+			// deal with vulnerable one here
+			next := r.Output()
+			if next == "stop" {
+				return true
+			}
+		}
+		return r.IsVulnerable
+	case "condition", "conditions":
+		var valid bool
+		for _, analyze := range scripts {
+			result, _ := vm.Run(analyze)
+			analyzeResult, err := result.Export()
+			// in case vm panic
+			if err != nil || analyzeResult == nil {
+				r.PassCondition = false
+				continue
+			}
+			r.PassCondition = analyzeResult.(bool)
+			utils.DebugF("[Condition] %v -- %v", analyze, r.PassCondition)
+			valid = r.PassCondition
+		}
+		return valid
+	case "pass", "passive", "passives":
+		for _, analyze := range scripts {
+			// pass detection here
+			result, _ := vm.Run(analyze)
+			analyzeResult, err := result.Export()
+			// in case vm panic
+			if err != nil || analyzeResult == nil {
+				r.PassiveString = analyze
+				r.IsVulnerablePassive = false
+				r.PassiveMatch = ""
+				continue
+			}
+			r.PassiveString = analyze
+			r.IsVulnerablePassive = analyzeResult.(bool)
+			r.PassiveMatch = extra
+
+			utils.DebugF("[PassiveDetect] %v -- %v", analyze, r.IsVulnerablePassive)
+			// deal with vulnerable one here
+			next := r.PassiveOutput()
+			if next == "stop" {
+				return true
+			}
+		}
+		return r.IsVulnerablePassive
 	}
-	return extra, analyzeResult.(bool)
+
+	return false
 }
 
+//////////////
+
 // ChooseOrigin choose origin to compare
-func ChooseOrigin(record libs.Record, index int) libs.Record {
+func ChooseOrigin(record Record, index int) Record {
 	selectedRec := record
 	if len(record.Origins) == 0 || len(record.Origins) < index {
 		return selectedRec
 	}
 
 	origin := record.Origins[index]
-	var compareRecord libs.Record
+	var compareRecord Record
 	compareRecord.Request = origin.ORequest
 	compareRecord.Response = origin.OResponse
 	selectedRec = compareRecord
@@ -393,13 +516,24 @@ func ChooseOrigin(record libs.Record, index int) libs.Record {
 }
 
 // GetComponent get component to run detection
-func GetComponent(record libs.Record, component string) string {
+func GetComponent(record Record, component string) string {
 	component = strings.ToLower(component)
 	utils.DebugF("Get Component: %v", component)
 	switch component {
 	case "orequest":
+
 		return record.OriginReq.Beautify
-	case "oresponse":
+	case "oresheaders", "oheaders", "ohead", "oresheader":
+		beautifyHeader := fmt.Sprintf("%v \n", record.OriginRes.Status)
+		for _, header := range record.OriginRes.Headers {
+			for key, value := range header {
+				beautifyHeader += fmt.Sprintf("%v: %v\n", key, value)
+			}
+		}
+		return beautifyHeader
+	case "obody", "oresbody":
+		return record.OriginRes.Body
+	case "oresponse", "ores":
 		return record.OriginRes.Beautify
 	case "request":
 		return record.Request.Beautify
@@ -408,7 +542,7 @@ func GetComponent(record libs.Record, component string) string {
 			return record.Response.Body
 		}
 		return record.Response.Beautify
-	case "resheader":
+	case "resheader", "resheaders", "headers", "header":
 		beautifyHeader := fmt.Sprintf("%v \n", record.Response.Status)
 		for _, header := range record.Response.Headers {
 			for key, value := range header {
@@ -416,18 +550,12 @@ func GetComponent(record libs.Record, component string) string {
 			}
 		}
 		return beautifyHeader
-	case "resheaders":
-		beautifyHeader := fmt.Sprintf("%v \n", record.Response.Status)
-		for _, header := range record.Response.Headers {
-			for key, value := range header {
-				beautifyHeader += fmt.Sprintf("%v: %v\n", key, value)
-			}
-		}
-		return beautifyHeader
-	case "body":
+	case "body", "resbody":
 		return record.Response.Body
-	case "resbody":
-		return record.Response.Body
+	case "bytes", "byte", "hex":
+		return hex.EncodeToString([]byte(record.Request.Beautify))
+	case "byteBody", "hexBody":
+		return hex.EncodeToString([]byte(record.Request.Body))
 	case "middleware":
 		return record.Request.MiddlewareOutput
 	default:
@@ -464,6 +592,7 @@ func RegexSearch(component string, analyzeString string) (string, bool) {
 		result = true
 		extra = strings.Join(matches, "\n")
 	}
+	utils.DebugF("Component: %v", component)
 	utils.DebugF("analyzeRegex: %v -- %v", analyzeString, result)
 	return extra, result
 }
@@ -479,7 +608,7 @@ func RegexCount(component string, analyzeString string) int {
 }
 
 // RegexGrep grep regex string from component
-func RegexGrep(realRec libs.Record, arguments []otto.Value) string {
+func RegexGrep(realRec Record, arguments []otto.Value) string {
 	componentName := arguments[0].String()
 	component := GetComponent(realRec, componentName)
 
@@ -541,46 +670,47 @@ func CommonError(component string) (string, bool) {
 	return extra, result
 }
 
-// PollCollab polling burp collab with secret from DB
-func PollCollab(record libs.Record, analyzeString string) (string, bool) {
-	// only checking response return in external OOB
-	ssrf := database.GetDefaultBurpCollab()
-	if ssrf != "" {
-		res := database.GetDefaultBurpRes()
-		result := StringSearch(record.Response.Beautify, res)
-		return res, result
-	}
-
-	// storing raw here so we can poll later
-	database.ImportReqLog(record, analyzeString)
-	secretCollab := url.QueryEscape(database.GetSecretbyCollab(analyzeString))
-
-	// poll directly
-	burl := fmt.Sprintf("http://polling.burpcollaborator.net/burpresults?biid=%v", secretCollab)
-	_, response, _ := gorequest.New().Get(burl).End()
-	jsonParsed, _ := gabs.ParseJSON([]byte(response))
-	exists := jsonParsed.Exists("responses")
-	if exists == false {
-		data := database.GetOOB(analyzeString)
-		if data != "" {
-			return data, strings.Contains(data, analyzeString)
-		}
-		return "", false
-	}
-
-	// jsonParsed.Path("responses").Children()
-	for _, element := range jsonParsed.Path("responses").Children() {
-		protocol := element.Path("protocol").Data().(string)
-		// import this to DB so we don't miss in other detect
-		database.ImportOutOfBand(fmt.Sprintf("%v", element))
-		if protocol == "http" {
-			interactionString := element.Path("interactionString").Data().(string)
-			return element.String(), strings.Contains(analyzeString, interactionString)
-		} else if protocol == "dns" {
-			interactionString := element.Path("interactionString").Data().(string)
-			return element.String(), strings.Contains(analyzeString, interactionString)
-		}
-	}
-
-	return "", false
-}
+//// @NOTE: deprecated for now
+//// PollCollab polling burp collab with secret from DB
+//func PollCollab(record Record, analyzeString string) (string, bool) {
+//	// only checking response return in external OOB
+//	ssrf := database.GetDefaultBurpCollab()
+//	if ssrf != "" {
+//		res := database.GetDefaultBurpRes()
+//		result := StringSearch(record.Response.Beautify, res)
+//		return res, result
+//	}
+//
+//	// storing raw here so we can poll later
+//	database.ImportReqLog(record, analyzeString)
+//	secretCollab := url.QueryEscape(database.GetSecretbyCollab(analyzeString))
+//
+//	// poll directly
+//	burl := fmt.Sprintf("http://polling.burpcollaborator.net/burpresults?biid=%v", secretCollab)
+//	_, response, _ := gorequest.New().Get(burl).End()
+//	jsonParsed, _ := gabs.ParseJSON([]byte(response))
+//	exists := jsonParsed.Exists("responses")
+//	if exists == false {
+//		data := database.GetOOB(analyzeString)
+//		if data != "" {
+//			return data, strings.Contains(data, analyzeString)
+//		}
+//		return "", false
+//	}
+//
+//	// jsonParsed.Path("responses").Children()
+//	for _, element := range jsonParsed.Path("responses").Children() {
+//		protocol := element.Path("protocol").Data().(string)
+//		// import this to DB so we don't miss in other detect
+//		database.ImportOutOfBand(fmt.Sprintf("%v", element))
+//		if protocol == "http" {
+//			interactionString := element.Path("interactionString").Data().(string)
+//			return element.String(), strings.Contains(analyzeString, interactionString)
+//		} else if protocol == "dns" {
+//			interactionString := element.Path("interactionString").Data().(string)
+//			return element.String(), strings.Contains(analyzeString, interactionString)
+//		}
+//	}
+//
+//	return "", false
+//}

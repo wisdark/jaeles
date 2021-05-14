@@ -250,15 +250,16 @@ Core Flags:
   -s, --signs strings           Signature selector (Multiple -s flags are accepted)
   -x, --exclude strings         Exclude Signature selector (Multiple -x flags are accepted)
   -L, --level int               Filter signatures by level (default 1)
-  -G, --passive                 Turn on passive detections
+  -G, --passive                 Turn on passive detections (default: false)
   -p, --params strings          Custom params -p='foo=bar' (Multiple -p flags are accepted)
   -H, --headers strings         Custom headers (e.g: -H 'Referer: {{.BaseURL}}') (Multiple -H flags are accepted)
 
 Mics Flags:
-      --proxy string            proxy
-      --timeout int             HTTP timeout (default 20)
-      --debug                   Debug
-  -v, --verbose                 Verbose
+      --hh string               Full help message
+  -v, --verbose                 Verbose output
+      --debug                   Enable Debug mode
+      --proxy string            Proxy for sending request
+      --timeout int             HTTP timeout (default 20s)
       --no-db                   Disable Database
   -S, --selectorFile string     Signature selector from file
   -J, --format-input            Enable special input format (default is false)
@@ -270,7 +271,6 @@ Mics Flags:
       --single string           Forced running in single mode
       --sverbose bool           Store verbose info in summary file
   -N  --no-output bool          Disable store output
-      --json bool               Store output as JSON format
       --chunk bool              Enable chunk running against big input
   -I, --inline string           Inline Detections
   -q, --quiet                   Enable Quiet Output
@@ -278,16 +278,20 @@ Mics Flags:
   -R, --report string           HTML report file name
       --title string            HTML report title
       --html string             Enable generate HTML reports after the scan done 
-      --hh string               Full help message
+      --json bool               Store output as JSON format
+      --local                   Enable local analyze (Accept input as local path e.g: -u /tmp/req.txt)
       --dr                      Shortcut for disable replicate request (avoid sending many timeout requests)
-      --at                      Enable Always True Detection for observe response
+      --fi                      Enable filtering mode (to use Diff() detection)
       --lc                      Shortcut for '--proxy http://127.0.0.1:8080'
+      --at                      Enable Always True Detection for observe response
       --ba                      Shortcut for take raw input as '{{.BaseURL}}'
 `
 	h += "\n\nExamples Commands:\n"
 	h += "  jaeles scan -s <signature> -u <url>\n"
 	h += "  jaeles scan -c 50 -s <signature> -U <list_urls> -L <level-of-signatures>\n"
 	h += "  jaeles scan -c 50 -s <signature> -U <list_urls>\n"
+	h += "  jaeles scan --fi -c 50 -s <sensitive-signature> -U <list_urls>\n"
+	h += "  jaeles scan --local -s <local-analyze> -u /path/to/response-file.txt\n"
 	h += "  jaeles scan -c 50 -s <signature> -U <list_urls> -p 'dest=xxx.burpcollaborator.net'\n"
 	h += "  jaeles scan -c 50 -s <signature> -U <list_urls> -f 'noti_slack \"{{.vulnInfo}}\"'\n"
 	h += "  jaeles scan -v -c 50 -s <signature> -U list_target.txt -o /tmp/output\n"
@@ -297,7 +301,7 @@ Mics Flags:
 	h += "  cat list_target.txt | jaeles scan -c 100 -s <signature>\n"
 
 	h += "\nOthers Commands:\n"
-	h += "  jaeles server -s '/tmp/custom-signature/sensitive/.*' -L 2\n"
+	h += "  jaeles server -s '/tmp/custom-signature/sensitive/.*' -L 2 --fi\n"
 	h += "  jaeles server --host 0.0.0.0 --port 5000 -s '/tmp/custom-signature/sensitive/.*' -L 2\n"
 	h += "  jaeles config reload --signDir /tmp/standard-signatures/\n"
 	h += "  jaeles config add -B /tmp/custom-active-signatures/\n"
@@ -355,6 +359,8 @@ func ScanMessage() {
 	h += "  jaeles scan -s <signature> -u <url>\n"
 	h += "  jaeles scan -c 50 -s <signature> -U <list_urls> -L <level-of-signatures>\n"
 	h += "  jaeles scan -c 50 -s <signature> -U <list_urls>\n"
+	h += "  jaeles scan --fi -c 50 -s <sensitive-signature> -U <list_urls>\n"
+	h += "  jaeles scan --local -s <local-analyze> -u /path/to/response-file.txt\n"
 	h += "  jaeles scan -c 50 -s <signature> -U <list_urls> -p 'dest=xxx.burpcollaborator.net'\n"
 	h += "  jaeles scan -c 50 -s <signature> -U <list_urls> -f 'noti_slack \"{{.vulnInfo}}\"'\n"
 	h += "  jaeles scan -v -c 50 -s <signature> -U list_target.txt -o /tmp/output\n"

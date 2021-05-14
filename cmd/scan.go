@@ -116,20 +116,28 @@ func runScan(cmd *cobra.Command, _ []string) error {
 	}, ants.WithPreAlloc(true))
 	defer p.Release()
 
-	for _, signFile := range options.SelectedSigns {
-		sign, err := core.ParseSign(signFile)
-		if err != nil {
-			utils.ErrorF("Error parsing YAML sign: %v", signFile)
-			continue
-		}
-		// filter signature by level
-		if sign.Level > options.Level {
-			continue
+	for _, url := range urls {
+		// calculate filtering result first if enabled from cli
+		baseJob := libs.Job{URL: url}
+		if options.EnableFiltering {
+			core.BaseCalculateFiltering(&baseJob, options)
 		}
 
-		// Submit tasks one by one.
-		for _, url := range urls {
+		for _, signFile := range options.SelectedSigns {
+			sign, err := core.ParseSign(signFile)
+			if err != nil {
+				utils.ErrorF("Error parsing YAML sign: %v", signFile)
+				continue
+			}
+
+			// filter signature by level
+			if sign.Level > options.Level {
+				continue
+			}
+			sign.Checksums = baseJob.Checksums
+
 			wg.Add(1)
+			// Submit tasks one by one.
 			job := libs.Job{URL: url, Sign: sign}
 			_ = p.Invoke(job)
 		}
@@ -146,32 +154,48 @@ func runScan(cmd *cobra.Command, _ []string) error {
 
 func CreateRunner(j interface{}) {
 	var jobs []libs.Job
-	job := j.(libs.Job)
+	rawJob := j.(libs.Job)
 
-	// auto append http and https prefix if not present
-	if !strings.HasPrefix(job.URL, "http://") && !strings.HasPrefix(job.URL, "https://") {
-		withPrefixJob := job
-		job.URL = "http://" + job.URL
-		jobs = append(jobs, withPrefixJob)
-
-		withPrefixJob = job
-		job.URL = "https://" + job.URL
-		jobs = append(jobs, withPrefixJob)
-	} else {
-		jobs = append(jobs, job)
+	if rawJob.Sign.Type == "dns" {
+		CreateDnsRunner(rawJob)
+		return
 	}
 
-	if (job.Sign.Replicate.Ports != "" || job.Sign.Replicate.Prefixes != "") && !options.Mics.DisableReplicate {
+	// enable local analyze
+	if options.LocalAnalyze {
+		core.LocalFileToResponse(&rawJob)
+	}
+
+	// auto prepend http and https prefix if not present
+	if !options.LocalAnalyze && !strings.HasPrefix(rawJob.URL, "http://") && !strings.HasPrefix(rawJob.URL, "https://") {
+		withPrefixJob := rawJob
+		withPrefixJob.URL = "http://" + rawJob.URL
+		jobs = append(jobs, withPrefixJob)
+
+		withPrefixJob = rawJob
+		withPrefixJob.URL = "https://" + rawJob.URL
+		jobs = append(jobs, withPrefixJob)
+	} else {
+		jobs = append(jobs, rawJob)
+	}
+
+	if (rawJob.Sign.Replicate.Ports != "" || rawJob.Sign.Replicate.Prefixes != "") && !options.Mics.DisableReplicate {
 		if options.Mics.BaseRoot {
-			job.Sign.BasePath = true
+			rawJob.Sign.BasePath = true
 		}
-		moreJobs, err := core.ReplicationJob(job.URL, job.Sign)
+		moreJobs, err := core.ReplicationJob(rawJob.URL, rawJob.Sign)
 		if err == nil {
 			jobs = append(jobs, moreJobs...)
 		}
 	}
 
 	for _, job := range jobs {
+		// custom calculate filtering if enabled inside signature
+		if job.Sign.Filter || len(job.Sign.FilteringPaths) > 0 {
+			core.CalculateFiltering(&job, options)
+		}
+		utils.DebugF("Raw Checksum: %v", job.Sign.Checksums)
+
 		if job.Sign.Type == "routine" {
 			routine, err := core.InitRoutine(job.URL, job.Sign, options)
 			if err != nil {
@@ -186,6 +210,15 @@ func CreateRunner(j interface{}) {
 		}
 		runner.Sending()
 	}
+}
+
+// CreateDnsRunner create runner for dns
+func CreateDnsRunner(job libs.Job) {
+	runner, err := core.InitDNSRunner(job.URL, job.Sign, options)
+	if err != nil {
+		utils.ErrorF("Error create new dns runner: %v", err)
+	}
+	runner.Resolving()
 }
 
 /////////////////////// Chunk options (very experimental)
@@ -221,9 +254,9 @@ func runChunk(command string, urlFiles []string, threads int) {
 		wg.Done()
 	}, ants.WithPreAlloc(true))
 	defer p.Release()
-	for _, command := range commands {
+	for _, cmd := range commands {
 		wg.Add(1)
-		_ = p.Invoke(command)
+		_ = p.Invoke(cmd)
 	}
 	wg.Wait()
 }

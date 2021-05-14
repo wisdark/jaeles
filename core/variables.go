@@ -8,7 +8,6 @@ import (
 	"math/rand"
 	"net/url"
 	"os/exec"
-	"path"
 	"strconv"
 	"strings"
 	"time"
@@ -464,11 +463,15 @@ func ReplicationJob(input string, sign libs.Signature) ([]libs.Job, error) {
 		if strings.Contains(value, "\n") {
 			value = strings.Trim(value, "\n\n")
 			prefiixes = append(prefiixes, strings.Split(value, "\n")...)
+		}
 
+		if !strings.Contains(strings.TrimSpace(value), "\n") && !strings.Contains(strings.TrimSpace(value), ",") {
+			prefiixes = append(prefiixes, value)
 		}
 	}
 
 	if len(ports) > 0 {
+		utils.DebugF("Replicate Ports: %v", prefiixes)
 		for _, port := range ports {
 			cloneURL := url.URL{}
 			err = copier.Copy(&cloneURL, u)
@@ -493,40 +496,36 @@ func ReplicationJob(input string, sign libs.Signature) ([]libs.Job, error) {
 	}
 
 	if len(prefiixes) > 0 {
+		utils.DebugF("Replicate Prefixes: %v", prefiixes)
 		if len(urls) == 0 {
 			urls = append(urls, input)
 		}
 
 		for _, urlRaw := range urls {
-			u, err := url.Parse(urlRaw)
-			if err != nil {
-				continue
-			}
-
 			for _, prefix := range prefiixes {
 				prefix = strings.TrimSpace(prefix)
-				cloneURL := url.URL{}
-				err = copier.Copy(&cloneURL, u)
-				if err != nil {
+				if prefix == "" {
 					continue
 				}
 
-				cloneURL.Path = path.Join(cloneURL.Path, prefix)
-				urlWithPrefix := cloneURL.String()
-				if !sign.BasePath {
-					urlWithPrefix = fmt.Sprintf("%s://%s/%s", cloneURL.Scheme, cloneURL.Host, prefix)
-				}
+				urlWithPrefix := utils.JoinURL(urlRaw, prefix)
 				urls = append(urls, urlWithPrefix)
 			}
 		}
 	}
 
 	for _, urlRaw := range urls {
+		// avoid duplicate here
+		if urlRaw == input {
+			continue
+		}
+
 		job := libs.Job{
 			URL:  urlRaw,
 			Sign: sign,
 		}
 		jobs = append(jobs, job)
 	}
+	utils.DebugF("New job created: %v", len(jobs))
 	return jobs, nil
 }

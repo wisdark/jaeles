@@ -6,6 +6,16 @@ type Signature struct {
 	RawPath string
 	Type    string
 	Level   int
+
+	// Enable filtering mode
+	Filter             bool
+	OverrideFilerPaths bool
+	FilteringPaths     []string `yaml:"fpaths"`
+	Checksums          []string
+	// local analyze
+	Local    bool
+	Response Response
+
 	// some mics options
 	Threads    int
 	Passive    bool
@@ -49,6 +59,12 @@ type Signature struct {
 	Variables  []map[string]string
 	Target     map[string]string
 
+	// for dns part only
+	Dns []Dns
+
+	// similar to passive but only applied in local check
+	Rules []Rule
+
 	// routines
 	Routines []Routine
 }
@@ -58,7 +74,9 @@ type Routine struct {
 	Signs  []map[string]string
 	Names  []string
 	Passed bool
+
 	Logics []struct {
+		Level      int
 		Expression string   `yaml:"expr"`
 		Invokes    []string `yaml:"invokes"`
 	} `yaml:"logics"`

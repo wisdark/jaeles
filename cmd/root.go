@@ -68,6 +68,7 @@ func init() {
 	RootCmd.PersistentFlags().StringVarP(&options.Selectors, "selectorFile", "S", "", "Signature selector from file")
 	RootCmd.PersistentFlags().StringSliceVarP(&options.Signs, "signs", "s", []string{}, "Signature selector (Multiple -s flags are accepted)")
 	RootCmd.PersistentFlags().StringSliceVarP(&options.Excludes, "exclude", "x", []string{}, "Exclude Signature selector (Multiple -x flags are accepted)")
+	RootCmd.PersistentFlags().BoolVar(&options.LocalAnalyze, "local", false, "Enable local analyze (Accept input as local path)")
 	// custom params from cli
 	RootCmd.PersistentFlags().StringSliceVarP(&options.Params, "params", "p", []string{}, "Custom params -p='foo=bar' (Multiple -p flags are accepted)")
 	RootCmd.PersistentFlags().StringSliceVarP(&options.Headers, "headers", "H", []string{}, "Custom headers (e.g: -H 'Referer: {{.BaseURL}}') (Multiple -H flags are accepted)")
@@ -94,6 +95,7 @@ func init() {
 	RootCmd.PersistentFlags().IntVar(&options.ChunkLimit, "chunk-limit", 200000, "Limit size to trigger chunk run")
 	// some shortcuts
 	RootCmd.PersistentFlags().StringVarP(&options.InlineDetection, "inline", "I", "", "Inline Detections")
+	RootCmd.PersistentFlags().BoolVar(&options.EnableFiltering, "fi", false, "Enable filtering mode (to use Diff() detection)")
 	RootCmd.PersistentFlags().BoolVar(&options.Mics.DisableReplicate, "dr", false, "Shortcut for disable replicate request (avoid sending many request to timeout)")
 	RootCmd.PersistentFlags().BoolVar(&options.Mics.BaseRoot, "ba", false, "Shortcut for take raw input as {{.BaseURL}}'")
 	RootCmd.PersistentFlags().BoolVar(&options.Mics.BurpProxy, "lc", false, "Shortcut for '--proxy http://127.0.0.1:8080'")
@@ -133,6 +135,7 @@ func InitDB() {
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Can't connect to DB at %v\n", options.Server.DBPath)
 			fmt.Fprintf(os.Stderr, "Use '--no-db' for to disable DB connection if you want.\n")
+			fmt.Fprintf(os.Stderr, "[Tips] run 'rm -rf ~/.jaeles/' and run 'jaeles config init' to reload the DB\n")
 			os.Exit(-1)
 		}
 	}

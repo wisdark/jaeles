@@ -37,6 +37,7 @@ type Options struct {
 	Refresh           int
 	Retry             int
 	SaveRaw           bool
+	LocalAnalyze      bool
 	JsonOutput        bool
 	VerboseSummary    bool
 	Quiet             bool
@@ -50,6 +51,11 @@ type Options struct {
 	EnableFormatInput bool
 	EnablePassive     bool
 	DisableParallel   bool
+
+	// only enable when doing sensitive mode
+	EnableFiltering bool
+	// for DNS
+	Resolver string
 
 	// Chunk Options
 	ChunkDir     string
@@ -116,16 +122,19 @@ type Config struct {
 
 // Job define job for running routine
 type Job struct {
-	URL  string
-	Sign Signature
+	URL       string
+	Checksums []string
+	Sign      Signature
+	// the base response
+	Response Response
 }
 
-// PJob define job for running routine
-type PJob struct {
-	Req  Request
-	ORec Record
-	Sign Signature
-}
+//// PJob define job for running routine
+//type PJob struct {
+//	Req  Request
+//	ORec Record
+//	Sign Signature
+//}
 
 // VulnData vulnerable Data
 type VulnData struct {
@@ -139,4 +148,9 @@ type VulnData struct {
 	Confidence      string
 	Req             string
 	Res             string
+	// little information
+	StatusCode    string
+	ContentLength string
+	OutputFile    string
+	SignatureFile string
 }

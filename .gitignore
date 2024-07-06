@@ -2,11 +2,9 @@
 .goreleaser.yml
 .idea
 .vscode
-Makefile
 dist
 out
 passive-*
 old-out
 http-out
 test-scripts
-Makefile
